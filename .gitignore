@@ -1,0 +1,39 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# measurement output — results/*.csv and results/*.png are committed on purpose
+# (see spec.md §11); these are the raw traces behind them, which are not
+results/raw/
+*.nsys-rep
+*.sqlite
+*.json.gz
+trace_*.json
+
+# model weights / caches — never committed
+*.safetensors
+*.pt
+*.bin
+.cache/
+
+# editor / OS cruft
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# personal/local Claude notes — never commit
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.codex
