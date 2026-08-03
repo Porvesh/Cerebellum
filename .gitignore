@@ -1,3 +1,6 @@
+# secrets only — .env itself is committed, it is a run condition
+.env.local
+
 # python
 __pycache__/
 *.py[cod]
