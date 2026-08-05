@@ -62,12 +62,16 @@ purpose. Chunking drives latency to near zero (pop from a queue) and drives stal
 
 ### In scope
 - Serving-side scheduling, buffering, and cadence control
+- **Inference-time stitching algorithms**, including real-time chunking written from the
+  paper rather than imported (§4.5). Anything that needs only a forward pass and the
+  actions we already committed is ours to write.
 - GPU execution optimisation: CUDA graphs, pinned memory, stream discipline
 - Latency and staleness measurement methodology
 - Integration with Retina (transport) and Axon (IPC + logging)
 
 ### Explicitly out of scope
-- Training, fine-tuning, or any policy learning
+- Training, fine-tuning, or any policy learning — which rules out training-time RTC
+  (arXiv:2512.05964) however attractive it looks
 - Model architecture changes
 - Writing custom CUDA kernels
 - Task-success evaluation (accuracy is only measured as a regression check on quantisation)
@@ -172,15 +176,20 @@ infer[k]───▶│ exec a0 a1 … a44 a45 a46 a47 a48 a49 │
 
 The overlap region is the interesting part. Chunk `k+1` was computed from an observation
 at time *t* but lands at *t + 90 ms*, by which point 2–3 more actions of chunk `k` have
-already gone out. Two options:
+already gone out. Three options:
 
 - **Discard the stale prefix.** Simple. Produces a discontinuity at the seam — the
   actuator jerks.
 - **Temporal ensembling.** Average the overlapping predictions from both chunks. Smooth,
   but you are blending two opinions formed from different observations.
+- **Real-time chunking.** Stop treating the overlap as something to reconcile *after*
+  generation. Condition the generation of chunk `k+1` on the actions already committed, so
+  there is no seam to smooth in the first place. See §4.5.
 
 Start with discard, measure the seam discontinuity, then implement ensembling and show
-the improvement. The before/after is a good result on its own.
+the improvement. The before/after is a good result on its own. RTC is the third row of the
+same table and the one that ought to win — the reason for building all three is that the
+comparison is then on equal footing.
 
 ### 4.4 Refresh trigger
 
@@ -201,6 +210,81 @@ worked:  p99 = 118 ms, period = 33 ms  →  R ≥ 4 actions of headroom
 This is why the measurement work comes before the tuning work. You cannot pick `R`
 without a trustworthy p99. (See §15.2 — in phase 2 the term to cover is the whole
 observation→chunk-ready path, not the forward pass alone.)
+
+### 4.5 Real-time chunking, written from the paper
+
+Discard and ensembling both operate on a chunk that already exists. Real-time chunking
+(RTC) — Black, Galliker & Levine, *Real-Time Execution of Action Chunking Flow Policies*,
+arXiv:2506.07339 — attacks the same problem one layer down: it treats the overlap as an
+**inpainting** problem inside the denoise loop. Actions guaranteed to execute are frozen,
+and the rest are generated conditioned on them. There is no seam because the new chunk was
+never free to disagree at the join.
+
+**We implement it.** lerobot ships an inference-time RTC and turning it on is one config
+flag — but then two of the three stitching policies are ours and one is somebody else's,
+with different tensor layouts, different instrumentation points, and different assumptions
+about inference delay. A three-way comparison built that way measures implementations as
+much as it measures policies. Ours lives behind the same `Stitching` enum as discard and
+ensemble and is timed by the same harness.
+
+Use lerobot's implementation as an **oracle**, not a dependency: same inputs, same fixed
+noise, assert the two agree to tolerance. That catches a sign error in the guidance term in
+one test rather than in a day of debugging.
+
+#### The mechanism
+
+Flow matching integrates from τ=1 to τ=0 over `num_steps` (10 for SmolVLA). Each step the
+denoiser returns a velocity `v_t`. RTC adds a correction pulling the trajectory toward the
+committed prefix:
+
+```
+x1_t       = x_t - τ·v_t                    # predicted clean actions at this step
+err        = (committed - x1_t) · w         # weighted disagreement with what we promised
+correction = (∂x1_t/∂x_t)ᵀ · err            # one autograd pass — per denoise step
+v          = v_t - g(τ)·correction
+
+g(τ)       = min( max_guidance_weight, c · inv_r2 )
+c          = (1-τ)/τ                        # 0 at τ=1, diverges at τ→0, hence the clamp
+inv_r2     = ((1-τ)² + τ²) / (1-τ)²
+```
+
+`w` is a per-timestep weight across the chunk, and it is where hard and soft masking live:
+
+| Schedule | Weights over H=50 (delay 3, horizon 10) | Behaviour |
+|---|---|---|
+| `ZEROS` | `[1,1,1, 0×47]` | hard — frozen inside the delay, free after |
+| `ONES` | `[1×10, 0×40]` | hard, extended across the whole horizon |
+| `LINEAR` | `[1,1,1, ramp 1→0 over 7, 0×40]` | hard prefix, then soft decay |
+| `EXP` | as LINEAR, decay `x·expm1(x)/(e-1)` | hard prefix, sharper soft decay |
+
+A weight of 1 is **hard masking**: this action is already promised, do not move it. The ramp
+is **soft masking**: these are probably ours to keep, bend toward them but not at any cost.
+The band between `inference_delay` and `execution_horizon` is where the algorithm actually
+lives — outside it, RTC is either a hard constraint or absent.
+
+#### What it demands of the runtime
+
+Two requirements, and both change the design rather than sitting on top of it:
+
+1. **The queue must publish its committed prefix.** `committed(from_step, n)` — the actions
+   already promised for the next `n` steps, expressed in the model's *padded* action space.
+   SmolVLA denoises in 32 dims and slices to 6; a prefix supplied in 6 dims silently drags
+   dims 6–31 toward zero. This is a new arrow — queue → worker — and it is the reason the
+   queue is indexed by absolute control step: "what did I promise for steps s…s+n" is a
+   slice, not a bookkeeping exercise.
+2. **`inference_delay` is measured, not assumed.** It is how many control periods the
+   forward actually takes: your own p99 divided by the period. The timing harness stops
+   being a reporting tool and becomes an input to the algorithm.
+
+#### What we are not doing
+
+The follow-up — *Training-Time Action Conditioning for Efficient Real-Time Chunking*,
+arXiv:2512.05964 — removes the inference-time cost by simulating the delay during training
+and conditioning on action prefixes directly. Out of scope by §2: it needs a retrained
+checkpoint. Worth knowing for *why* it exists, though. Its stated motivation is that
+inference-time inpainting "introduces computational overhead that increases inference
+latency," and it validates the replacement with task success and "speed parity." Neither
+paper reports a percentile. That is the gap this project sits in — see §11.5 and §15.6.
 
 ---
 
@@ -465,13 +549,34 @@ with a configurable loss model," it holds up fine.
 
 ## 11. Deliverables
 
-Three artifacts, in priority order:
+In priority order:
 
 1. **Stage latency table** — p50/p99 per stage, batch=1, idle H100, N=1000 after 50 warmup
 2. **Chunk-size sweep** — staleness and p99 control jitter as functions of `H`. Nobody
    publishes this curve.
 3. **Underrun count vs. refresh trigger** under injected inference-time variance
 4. *(phase 2)* **Glass-to-action p99 vs. packet loss rate**, stacked by stage
+
+### 11.5 What stitching costs, in milliseconds
+
+The one nobody has published. Three policies — discard, ensemble, RTC — against four
+columns:
+
+| | seam discontinuity (L∞) | forward p50/p99 | underruns at fixed `R` | staleness p99 |
+|---|---|---|---|---|
+| discard | | | | |
+| ensemble | | | | |
+| RTC (`LINEAR`) | | | | |
+
+The RTC row is the interesting one, because RTC buys smoothness with an autograd pass on
+every denoise step — 10 forward+backward instead of 10 forward, outside `inference_mode`.
+arXiv:2512.05964 was written because that cost is real, and it quantifies it as "speed
+parity" on task success. This table quantifies it in milliseconds against a deadline, which
+is a different and more useful claim: if RTC adds enough latency to force `R` up, it buys
+smoothness with staleness, and that trade has never been priced.
+
+Sweep the schedules (`ZEROS`/`ONES`/`LINEAR`/`EXP`) and `execution_horizon` as a second
+pass, once the three-way table exists.
 
 Plus the nsys before/after screenshot around CUDA graph capture — 300 scattered launches
 with visible gaps, then one dense block. That one image explains the whole optimisation.
@@ -595,3 +700,69 @@ needs a defined behaviour for the tick where it happens. Hold the last action, e
 or extrapolate? Holding is the obvious first choice (it is the only one of the three that
 can't inject a discontinuity of its own), but pick it deliberately and count the event
 either way: an underrun that gets papered over is a missed deadline you never hear about.
+
+### 15.5 `R` and `execution_horizon` are the same quantity from two sides
+
+The refresh trigger says *when to start inferring*. RTC's `execution_horizon` says *how many
+actions we promise not to change*. They are measured in the same units and they constrain
+each other, and neither paper writes down the relationship:
+
+- `execution_horizon > R` → you froze actions you will not reach. The guidance is pulling
+  the new chunk toward a prefix that gets discarded, which wastes the constraint and may
+  actively distort the actions you do execute.
+- `execution_horizon < inference_delay` → you left actions unconstrained that are already
+  committed. The seam comes back, in the one place RTC exists to remove it.
+
+The safe reading is `inference_delay ≤ execution_horizon ≤ R`, all three derived from the
+same measured p99 rather than configured independently. Confirm it experimentally: sweep
+`execution_horizon` against seam discontinuity at fixed `R` and find out whether the
+predicted cliff is there.
+
+### 15.6 RTC and CUDA graph capture may be mutually exclusive
+
+Phase 1 step 5's headline optimisation is capturing the denoise loop as one CUDA graph — 10
+sequential tiny steps collapsed into a single launch. RTC's guidance runs
+`torch.autograd.grad` inside that same loop, under `enable_grad`, building a fresh autograd
+graph per step. Graph capture wants a static, replayable kernel sequence; autograd wants to
+build one dynamically. lerobot already hints at the tension by exposing
+`torch.compile(sample_actions)` in the same class as the RTC hook.
+
+So the two headline wins may not compose, and finding out is a result either way:
+
+- If they don't compose, the trade is explicit — smoothness *or* launch-overhead reduction —
+  and that is worth stating plainly, because it means RTC's real cost is larger than the
+  autograd pass alone.
+- If they do (the VJP is structurally static, so capture might be achievable with care),
+  that is a genuine contribution: RTC at graph-captured latency.
+
+Measure the plain autograd cost first (§11.5), then attempt capture. Don't design around
+this before it has a number.
+
+---
+
+## 16. References
+
+**Real-Time Execution of Action Chunking Flow Policies.** Kevin Black, Manuel Y. Galliker,
+Sergey Levine. arXiv:2506.07339 (Jun 2025, rev. Dec 2025).
+<https://arxiv.org/abs/2506.07339> — the RTC algorithm implemented in §4.5. The problem
+statement is the same as §4.3's: *"action chunking … does not fully address the latency
+problem, leading to pauses or out-of-distribution jerky movements at chunk boundaries."*
+The pauses are our underruns; the jerky movements are our seam.
+
+**Training-Time Action Conditioning for Efficient Real-Time Chunking.** Kevin Black,
+Allen Z. Ren, Michael Equi, Sergey Levine. arXiv:2512.05964 (Dec 2025).
+<https://arxiv.org/abs/2512.05964> — out of scope (needs retraining), but the paper that
+motivates §11.5. It exists because inference-time inpainting costs latency, and it settles
+that cost with "speed parity" rather than a distribution.
+
+**How NOT to Measure Latency.** Gil Tene. On coordinated omission — the reason §9 measures
+against the schedule rather than against the call site. Read this before writing the timing
+harness, not after.
+
+**Physical Intelligence: Real-Time Chunking.**
+<https://www.physicalintelligence.company/research/real_time_chunking> — the blog version of
+2506.07339, with the animations that make the freeze-and-inpaint idea obvious.
+
+Neither RTC paper reports a latency percentile. That is not a criticism of them — they are
+policy papers, and their contribution is the algorithm. It is the observation that this
+project exists to act on.
