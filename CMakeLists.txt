@@ -23,6 +23,12 @@ add_executable(test_config tests/test_config.cpp)
 target_link_libraries(test_config PRIVATE cerebellum_core)
 add_test(NAME config COMMAND test_config)
 
+# Timing links Threads::Threads for sleep_until — the harness is single-threaded,
+# but std::this_thread pulls in pthread on libstdc++.
+add_executable(test_timing tests/test_timing.cpp)
+target_link_libraries(test_timing PRIVATE cerebellum_core Threads::Threads)
+add_test(NAME timing COMMAND test_timing)
+
 # As components land, register them here:
 #
 #   add_executable(test_chunk_queue tests/test_chunk_queue.cpp)
