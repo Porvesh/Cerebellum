@@ -29,13 +29,13 @@ add_executable(test_timing tests/test_timing.cpp)
 target_link_libraries(test_timing PRIVATE cerebellum_core Threads::Threads)
 add_test(NAME timing COMMAND test_timing)
 
-# As components land, register them here:
-#
-#   add_executable(test_chunk_queue tests/test_chunk_queue.cpp)
-#   target_link_libraries(test_chunk_queue PRIVATE cerebellum_core)
-#   add_test(NAME chunk_queue COMMAND test_chunk_queue)
-#
-# Anything touching two threads also links Threads::Threads.
+add_executable(test_chunk_queue tests/test_chunk_queue.cpp)
+target_link_libraries(test_chunk_queue PRIVATE cerebellum_core)
+add_test(NAME chunk_queue COMMAND test_chunk_queue)
+
+add_executable(test_chunk_queue_mt tests/test_chunk_queue_mt.cpp)
+target_link_libraries(test_chunk_queue_mt PRIVATE cerebellum_core Threads::Threads)
+add_test(NAME chunk_queue_mt COMMAND test_chunk_queue_mt)
 
 # ThreadSanitizer for the concurrency tests — the chunk queue has one producer
 # (inference worker) and one consumer (control thread), so it earns the same
@@ -45,7 +45,6 @@ option(CEREBELLUM_TSAN "Build the concurrency tests with ThreadSanitizer" OFF)
 
 if(CEREBELLUM_TSAN)
     message(STATUS "cerebellum: ThreadSanitizer enabled")
-    # Add -fsanitize=thread to the MT test targets as they appear, e.g.
-    #   target_compile_options(test_chunk_queue_mt PRIVATE -fsanitize=thread -g -O1)
-    #   target_link_options(test_chunk_queue_mt    PRIVATE -fsanitize=thread)
+    target_compile_options(test_chunk_queue_mt PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(test_chunk_queue_mt PRIVATE -fsanitize=thread)
 endif()
