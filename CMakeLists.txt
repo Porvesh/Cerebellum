@@ -37,6 +37,10 @@ add_executable(test_chunk_queue_mt tests/test_chunk_queue_mt.cpp)
 target_link_libraries(test_chunk_queue_mt PRIVATE cerebellum_core Threads::Threads)
 add_test(NAME chunk_queue_mt COMMAND test_chunk_queue_mt)
 
+add_executable(test_loop tests/test_loop.cpp)
+target_link_libraries(test_loop PRIVATE cerebellum_core Threads::Threads)
+add_test(NAME loop COMMAND test_loop)
+
 # ThreadSanitizer for the concurrency tests — the chunk queue has one producer
 # (inference worker) and one consumer (control thread), so it earns the same
 # scrutiny Retina's buffers got. Off by default; flip on with -DCEREBELLUM_TSAN=ON
@@ -47,4 +51,6 @@ if(CEREBELLUM_TSAN)
     message(STATUS "cerebellum: ThreadSanitizer enabled")
     target_compile_options(test_chunk_queue_mt PRIVATE -fsanitize=thread -g -O1)
     target_link_options(test_chunk_queue_mt PRIVATE -fsanitize=thread)
+    target_compile_options(test_loop PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(test_loop PRIVATE -fsanitize=thread)
 endif()
