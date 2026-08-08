@@ -61,9 +61,35 @@ never blocks on the GPU.**
 
 ## Status
 
-Spec only — see [`spec.md`](spec.md) for the problem statement, latency budget, invariants,
-measurement methodology, and the phased plan. Nothing is measured yet; every number in the
-spec is a target, and §15 lists the places where the targets don't yet close.
+The standalone phase-1 skeleton is implemented: configuration validation, fixed-grid timing,
+a lock-free action-chunk queue, and the two-thread control/inference runtime. The Python model
+side now loads `lerobot/smolvla_base` and returns both representations needed by the system:
+
+- `model_actions`: `50 × 32`, padded model space retained for future RTC conditioning.
+- `robot_actions`: `50 × 6`, sliced and postprocessed for execution.
+
+The base checkpoint smoke test proves loading, preprocessing, denoising, and output shapes; it
+does not establish useful robot behavior without task-specific fine-tuning.
+
+Run the dependency-light contract tests:
+
+```bash
+PYTHONPATH=python conda run -n cerebellum python -m pytest -q
+```
+
+Run one real checkpoint forward from the local Hugging Face cache:
+
+```bash
+PYTHONPATH=python conda run -n cerebellum \
+  python -m cerebellum_model.smoke --device cuda --local-files-only
+```
+
+Use `--device cpu` when no GPU has enough free memory. Install the pinned optional dependencies
+without sudo using `python/requirements-smolvla.txt`.
+
+See [`spec.md`](spec.md) for the problem statement, latency budget, invariants, measurement
+methodology, and phased plan. Performance numbers in the spec remain targets until the benchmark
+tables and sweeps are committed.
 
 Phase 1 is the runtime standalone on synthetic input; phase 2 wires in Retina and Axon.
 The deliverables, in priority order, are a per-stage p50/p99 latency table, a chunk-size

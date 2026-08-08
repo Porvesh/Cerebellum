@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=71"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cerebellum-model"
+version = "0.1.0"
+description = "SmolVLA inference worker for the Cerebellum real-time runtime"
+requires-python = ">=3.11,<3.12"
+dependencies = ["numpy>=2.0,<3"]
+
+[project.optional-dependencies]
+smolvla = ["lerobot[smolvla]==0.4.4"]
+test = ["pytest>=8,<10"]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.pytest.ini_options]
+pythonpath = ["python"]
+testpaths = ["python/tests"]
+markers = ["smolvla: requires cached weights and enough CPU/GPU memory"]
