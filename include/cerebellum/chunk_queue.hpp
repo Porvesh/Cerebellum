@@ -38,10 +38,13 @@
 
 namespace cerebellum {
 
-// The model denoises in padded dims and slices down, so everything the runtime
-// stores lives in the padded space (§4.5). An action handed to RTC in 6 dims
-// silently drags dims 6-31 toward zero.
+// Robot commands and RTC conditioning are different representations. Action is
+// the postprocessed command consumed by the control loop (only action_dim values
+// are meaningful); ModelAction is the normalized padded trajectory RTC needs.
+// Collapsing them would either command normalized values or feed denormalized
+// values back into diffusion.
 using Action = std::array<float, kPaddedActionDim>;
+using ModelAction = std::array<float, kPaddedActionDim>;
 
 // Consumer holds two (current + previous, for the ensemble overlap), producer
 // holds one under construction, one may be in flight in the ready ring.
@@ -50,7 +53,8 @@ inline constexpr std::size_t kChunkSlots = 4;
 // A pool slot. Fixed size — kChunkSize is compiled in, so a config asking for a
 // longer chunk is rejected in the constructor rather than allocating (#3).
 struct Chunk {
-    std::array<Action, kChunkSize> actions{};
+    std::array<Action, kChunkSize> actions{};             // executable robot space
+    std::array<ModelAction, kChunkSize> model_actions{};  // normalized RTC space
     int count = 0;                // actions actually written
     std::int64_t first_step = 0;  // absolute control step of actions[0]
     ChunkStamps stamps{};

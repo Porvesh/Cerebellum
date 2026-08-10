@@ -356,17 +356,18 @@ freedom only at the end. That slice point is an architectural decision, not a de
                  model's padded space (wide)              robot's real DOF (narrow)
                  ─────────────────────────────            ─────────────────────────
 
-   worker    ────▶ generates here
-   queue     ────▶ stores here
-   stitching ────▶ blends only the real dims
+   worker    ────▶ generates here ────────────────────▶ postprocesses here
+   queue     ────▶ stores model copy                   stores command copy ───▶
+   stitching                                             blends commands only
    RTC prefix ───▶ must be handed back here
-   actuator  ──────────────────────────────────────────▶  sliced HERE, once, last
+   actuator  ────────────────────────────────────────────────────────────────▶
 ```
 
-Everything the runtime holds lives in the padded space. A prefix handed to RTC in the
-narrow space would leave the padded dimensions implicitly zero, and the inpainting mask
-would then *enforce* those zeros — no error raised, just a denoise quietly constrained on
-dimensions nobody intended to constrain.
+Each chunk therefore holds two representations: the padded normalized model trajectory for
+RTC and the narrow postprocessed robot commands for execution. A prefix handed to RTC in the
+narrow space would leave the padded dimensions implicitly zero, while commanding the model
+copy would bypass postprocessing. Either error is silent, so the types and bridge protocol keep
+the two arrays separate.
 
 ---
 

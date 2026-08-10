@@ -7,13 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra)
 
-# The runtime is header-only: config, chunk queue, timing harness, control loop.
-# An INTERFACE library carries no compiled code — it hands its include path to
-# anything that links it.
+# The hard real-time core stays header-only. The optional Python bridge is a
+# compiled POSIX adapter and never runs on the control thread.
 add_library(cerebellum_core INTERFACE)
 target_include_directories(cerebellum_core INTERFACE ${CMAKE_SOURCE_DIR}/include)
 
 find_package(Threads REQUIRED)
+
+add_library(cerebellum_python_bridge STATIC src/python_chunk_generator.cpp)
+target_link_libraries(cerebellum_python_bridge PUBLIC cerebellum_core Threads::Threads)
 
 # --- tests ---
 # One dependency-free test per component, each returning its failure count.
@@ -40,6 +42,14 @@ add_test(NAME chunk_queue_mt COMMAND test_chunk_queue_mt)
 add_executable(test_loop tests/test_loop.cpp)
 target_link_libraries(test_loop PRIVATE cerebellum_core Threads::Threads)
 add_test(NAME loop COMMAND test_loop)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(test_python_chunk_generator tests/test_python_chunk_generator.cpp)
+target_link_libraries(test_python_chunk_generator PRIVATE cerebellum_python_bridge)
+target_compile_definitions(test_python_chunk_generator PRIVATE
+    CEREBELLUM_TEST_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_TEST_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+add_test(NAME python_chunk_generator COMMAND test_python_chunk_generator)
 
 # ThreadSanitizer for the concurrency tests — the chunk queue has one producer
 # (inference worker) and one consumer (control thread), so it earns the same

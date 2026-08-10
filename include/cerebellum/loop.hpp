@@ -30,9 +30,9 @@ struct InferenceRequest {
 };
 
 // Blocking is allowed here: this method runs only on the inference worker. A
-// synthetic generator implements it in phase 1; the Python transport will later
-// implement the same boundary around SmolVLA and RTC. On success it fills
-// actions, count, and observation provenance. RuntimeLoop owns first_step,
+// PythonChunkGenerator implements the same boundary around a persistent worker.
+// On success it fills executable actions, padded model actions, count, and
+// observation provenance. RuntimeLoop owns first_step,
 // chunk_id, and inference start/end stamps so every backend is measured alike.
 class ChunkGenerator {
 public:
