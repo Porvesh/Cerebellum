@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import numpy as np
 
-from cerebellum_model.protocol import WireImage, WireObservation, WireRequest
-from cerebellum_model.server import _observation_from_wire, _seed_for_observation
+import pytest
+
+from cerebellum_model.protocol import (
+    ProtocolError,
+    WireImage,
+    WireImageSpec,
+    WireObservation,
+    WireRequest,
+)
+from cerebellum_model.server import (
+    RunnerSpec,
+    _observation_from_wire,
+    _seed_for_observation,
+    _validate_observation_schema,
+)
 
 
 def wire_request(first_pixel: int = 0) -> WireRequest:
@@ -40,3 +53,15 @@ def test_server_converts_hwc_bytes_to_chw_unit_floats() -> None:
 
 def test_synthetic_seed_depends_on_camera_payload() -> None:
     assert _seed_for_observation(wire_request(1)) != _seed_for_observation(wire_request(2))
+
+
+def test_checkpoint_schema_rejects_wrong_observation_shape() -> None:
+    spec = RunnerSpec(
+        chunk_size=50,
+        model_dim=32,
+        robot_dim=6,
+        state_dim=6,
+        images=(WireImageSpec("camera", 3, 256, 256),),
+    )
+    with pytest.raises(ProtocolError, match="state shape"):
+        _validate_observation_schema(wire_request(), spec)

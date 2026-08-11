@@ -8,11 +8,14 @@ import pytest
 
 from cerebellum_model.protocol import (
     ProtocolError,
+    WireImageSpec,
     WireImage,
     WireObservation,
     WireRequest,
     WireResponse,
+    decode_hello,
     decode_request,
+    encode_hello,
     encode_request,
     encode_response,
     read_frame,
@@ -29,6 +32,27 @@ def test_frames_survive_partial_reads() -> None:
             return super().read(min(size, 2))
 
     assert read_frame(TwoBytesAtATime(target.getvalue())) == b"hello"
+
+
+def test_hello_round_trips_checkpoint_observation_schema() -> None:
+    images = (
+        WireImageSpec("observation.images.camera1", 3, 256, 256),
+        WireImageSpec("observation.images.camera2", 3, 256, 256),
+    )
+    hello = decode_hello(
+        encode_hello(
+            chunk_size=50,
+            model_dim=32,
+            robot_dim=6,
+            state_dim=6,
+            images=images,
+        )
+    )
+    assert hello.chunk_size == 50
+    assert hello.model_dim == 32
+    assert hello.robot_dim == 6
+    assert hello.state_dim == 6
+    assert hello.images == images
 
 
 def request() -> WireRequest:

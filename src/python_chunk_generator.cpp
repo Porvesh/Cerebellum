@@ -24,7 +24,7 @@ extern char** environ;
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 2;
+constexpr std::uint16_t kProtocolVersion = 3;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBHI";
 constexpr std::string_view kRequestMagic = "CBRQ";
@@ -114,10 +114,12 @@ std::uint8_t stitching_value(Stitching stitching) {
 PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
                                            ObservationSource& observations,
                                            PythonChunkGeneratorOptions options)
-    : config_(config), observations_(observations), options_(std::move(options)) {
+    : config_(config), observations_(observations), options_(std::move(options)),
+      io_timeout_(options_.startup_timeout) {
     config_.validate();
-    if (options_.timeout <= std::chrono::milliseconds::zero()) {
-        throw std::invalid_argument("Python worker timeout must be positive");
+    if (options_.startup_timeout <= std::chrono::milliseconds::zero() ||
+        options_.inference_timeout <= std::chrono::milliseconds::zero()) {
+        throw std::invalid_argument("Python worker timeouts must be positive");
     }
 
     int sockets[2] = {-1, -1};
@@ -134,14 +136,19 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
         code,
         options_.python_package_path,
         "--runner",
-        "synthetic",
+        options_.runner == PythonRunner::Synthetic ? "synthetic" : "smolvla",
         "--chunk-size",
         std::to_string(config_.chunk_size),
         "--model-dim",
         std::to_string(config_.padded_action_dim),
         "--robot-dim",
         std::to_string(config_.action_dim),
+        "--model",
+        options_.model,
+        "--device",
+        options_.device,
     };
+    if (options_.local_files_only) arguments.emplace_back("--local-files-only");
     std::vector<char*> argv;
     argv.reserve(arguments.size() + 1);
     for (std::string& argument : arguments) argv.push_back(argument.data());
@@ -180,6 +187,7 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
         stop_child();
         throw std::runtime_error("Python worker handshake failed: " + error);
     }
+    io_timeout_ = options_.inference_timeout;
 }
 
 PythonChunkGenerator::~PythonChunkGenerator() { stop_child(); }
@@ -202,6 +210,7 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
             last_error_ = std::string("invalid observation: ") + exc.what();
             return false;
         }
+        if (!observation_matches_schema(*observation)) return false;
         if (observation->state.size() > std::numeric_limits<std::uint32_t>::max() ||
             observation->images.size() > std::numeric_limits<std::uint16_t>::max() ||
             observation->task.size() > std::numeric_limits<std::uint32_t>::max()) {
@@ -318,22 +327,75 @@ bool PythonChunkGenerator::read_handshake() {
         const std::uint32_t chunk_size = reader.u32();
         const std::uint16_t model_dim = reader.u16();
         const std::uint16_t robot_dim = reader.u16();
+        const std::uint16_t state_dim = reader.u16();
+        const std::uint16_t image_count = reader.u16();
         const std::uint32_t error_size = reader.u32();
         if (status != 0) {
             last_error_ = std::string(reader.bytes(error_size));
             return false;
         }
-        if (error_size != 0 || !reader.empty()) throw std::runtime_error("invalid handshake length");
+        if (error_size != 0) throw std::runtime_error("successful handshake contains an error");
         if (chunk_size != static_cast<std::uint32_t>(config_.chunk_size) ||
             model_dim != static_cast<std::uint16_t>(config_.padded_action_dim) ||
             robot_dim != static_cast<std::uint16_t>(config_.action_dim)) {
             throw std::runtime_error("Python worker model shape does not match RuntimeConfig");
         }
+        schema_.state_dim = state_dim;
+        schema_.images.clear();
+        schema_.images.reserve(image_count);
+        for (std::uint16_t i = 0; i < image_count; ++i) {
+            const std::uint16_t name_size = reader.u16();
+            WorkerImageSpec image;
+            image.channels = reader.u16();
+            image.height = reader.u16();
+            image.width = reader.u16();
+            image.feature_name = std::string(reader.bytes(name_size));
+            if (image.feature_name.empty() || image.channels == 0 || image.height == 0 ||
+                image.width == 0) {
+                throw std::runtime_error("Python worker sent an invalid image schema");
+            }
+            for (const WorkerImageSpec& existing : schema_.images) {
+                if (existing.feature_name == image.feature_name) {
+                    throw std::runtime_error("Python worker sent duplicate image schema names");
+                }
+            }
+            schema_.images.push_back(std::move(image));
+        }
+        if (!reader.empty()) throw std::runtime_error("invalid handshake length");
         return true;
     } catch (const std::exception& exc) {
         last_error_ = exc.what();
         return false;
     }
+}
+
+bool PythonChunkGenerator::observation_matches_schema(
+    const ObservationSnapshot& observation) {
+    if (!schema_.constrained()) return true;
+    if (observation.state.size() != schema_.state_dim) {
+        last_error_ = "observation state dimension does not match Python worker schema";
+        return false;
+    }
+    if (observation.images.size() != schema_.images.size()) {
+        last_error_ = "observation image count does not match Python worker schema";
+        return false;
+    }
+    for (const WorkerImageSpec& expected : schema_.images) {
+        const CameraImage* found = nullptr;
+        for (const CameraImage& image : observation.images) {
+            if (image.feature_name == expected.feature_name) {
+                found = &image;
+                break;
+            }
+        }
+        if (!found || found->channels != expected.channels || found->height != expected.height ||
+            found->width != expected.width) {
+            last_error_ = "observation camera schema does not match Python worker schema: " +
+                          expected.feature_name;
+            return false;
+        }
+    }
+    return true;
 }
 
 bool PythonChunkGenerator::write_frame(const void* data, std::size_t size) {
@@ -397,7 +459,7 @@ bool PythonChunkGenerator::wait_for(short events) {
     pollfd descriptor{socket_, events, 0};
     int result = 0;
     do {
-        result = ::poll(&descriptor, 1, static_cast<int>(options_.timeout.count()));
+        result = ::poll(&descriptor, 1, static_cast<int>(io_timeout_.count()));
     } while (result < 0 && errno == EINTR);
     if (result == 0) {
         transport_error("Python worker timed out");

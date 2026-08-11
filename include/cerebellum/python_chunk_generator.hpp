@@ -4,16 +4,38 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "cerebellum/loop.hpp"
 #include "cerebellum/observation.hpp"
 
 namespace cerebellum {
 
+enum class PythonRunner { Synthetic, SmolVla };
+
+struct WorkerImageSpec {
+    std::string feature_name;
+    std::uint16_t channels = 0;
+    std::uint16_t height = 0;
+    std::uint16_t width = 0;
+};
+
+struct WorkerObservationSchema {
+    std::uint16_t state_dim = 0;
+    std::vector<WorkerImageSpec> images;
+
+    bool constrained() const noexcept { return state_dim != 0 || !images.empty(); }
+};
+
 struct PythonChunkGeneratorOptions {
     std::string python_executable = "python3";
     std::string python_package_path = "python";
-    std::chrono::milliseconds timeout{5'000};
+    PythonRunner runner = PythonRunner::Synthetic;
+    std::string model = "lerobot/smolvla_base";
+    std::string device = "cuda";
+    bool local_files_only = false;
+    std::chrono::milliseconds startup_timeout{600'000};
+    std::chrono::milliseconds inference_timeout{30'000};
     std::uint32_t seed = 0;
 };
 
@@ -33,6 +55,7 @@ public:
 
     bool healthy() const noexcept { return socket_ >= 0; }
     const std::string& last_error() const noexcept { return last_error_; }
+    const WorkerObservationSchema& observation_schema() const noexcept { return schema_; }
 
 private:
     bool read_handshake();
@@ -43,10 +66,13 @@ private:
     bool wait_for(short events);
     void transport_error(std::string message) noexcept;
     void stop_child() noexcept;
+    bool observation_matches_schema(const ObservationSnapshot& observation);
 
     RuntimeConfig config_;
     ObservationSource& observations_;
     PythonChunkGeneratorOptions options_;
+    WorkerObservationSchema schema_;
+    std::chrono::milliseconds io_timeout_;
     int socket_ = -1;
     int child_pid_ = -1;
     std::uint64_t next_request_id_ = 1;

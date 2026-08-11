@@ -9,11 +9,12 @@ from typing import BinaryIO
 import numpy as np
 from numpy.typing import NDArray
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 _FRAME = struct.Struct(">I")
-_HELLO = struct.Struct(">4sHBBIHHI")
+_HELLO = struct.Struct(">4sHBBIHHHHI")
+_HELLO_IMAGE = struct.Struct(">HHHH")
 _REQUEST = struct.Struct(">4sHBBQqqIIQqIHI")
 _IMAGE = struct.Struct(">HHHHI")
 _RESPONSE = struct.Struct(">4sHBBQqQqIHHI")
@@ -34,6 +35,23 @@ class WireImage:
     height: int
     width: int
     pixels: NDArray[np.uint8]
+
+
+@dataclass(frozen=True, slots=True)
+class WireImageSpec:
+    feature_name: str
+    channels: int
+    height: int
+    width: int
+
+
+@dataclass(frozen=True, slots=True)
+class WireHello:
+    chunk_size: int
+    model_dim: int
+    robot_dim: int
+    state_dim: int
+    images: tuple[WireImageSpec, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,15 +102,95 @@ def write_frame(stream: BinaryIO, payload: bytes) -> None:
     stream.flush()
 
 
-def encode_hello(*, chunk_size: int, model_dim: int, robot_dim: int) -> bytes:
-    return _HELLO.pack(
-        HELLO_MAGIC, PROTOCOL_VERSION, 0, 0, chunk_size, model_dim, robot_dim, 0
+def encode_hello(
+    *,
+    chunk_size: int,
+    model_dim: int,
+    robot_dim: int,
+    state_dim: int = 0,
+    images: tuple[WireImageSpec, ...] = (),
+) -> bytes:
+    if state_dim > 0xFFFF or len(images) > 0xFFFF:
+        raise ProtocolError("hello observation schema exceeds protocol limits")
+    payload = bytearray(
+        _HELLO.pack(
+            HELLO_MAGIC,
+            PROTOCOL_VERSION,
+            0,
+            0,
+            chunk_size,
+            model_dim,
+            robot_dim,
+            state_dim,
+            len(images),
+            0,
+        )
     )
+    for image in images:
+        name = image.feature_name.encode("utf-8")
+        dimensions_fit = all(
+            0 < value <= 0xFFFF
+            for value in (image.channels, image.height, image.width)
+        )
+        if not name or len(name) > 0xFFFF or not dimensions_fit:
+            raise ProtocolError("invalid image specification")
+        payload.extend(
+            _HELLO_IMAGE.pack(
+                len(name), image.channels, image.height, image.width
+            )
+        )
+        payload.extend(name)
+    return bytes(payload)
 
 
 def encode_hello_error(message: str) -> bytes:
     detail = message.encode("utf-8")
-    return _HELLO.pack(HELLO_MAGIC, PROTOCOL_VERSION, 1, 0, 0, 0, 0, len(detail)) + detail
+    return _HELLO.pack(
+        HELLO_MAGIC, PROTOCOL_VERSION, 1, 0, 0, 0, 0, 0, 0, len(detail)
+    ) + detail
+
+
+def decode_hello(payload: bytes) -> WireHello:
+    if len(payload) < _HELLO.size:
+        raise ProtocolError("hello header is truncated")
+    (
+        magic,
+        version,
+        status,
+        _reserved,
+        chunk_size,
+        model_dim,
+        robot_dim,
+        state_dim,
+        image_count,
+        error_size,
+    ) = _HELLO.unpack_from(payload)
+    if magic != HELLO_MAGIC:
+        raise ProtocolError("bad hello magic")
+    if version != PROTOCOL_VERSION:
+        raise ProtocolError(f"unsupported protocol version: {version}")
+    if status != 0:
+        detail = _take(payload, _HELLO.size, error_size, "hello error")
+        raise ProtocolError(detail.decode("utf-8", errors="replace"))
+    if error_size != 0:
+        raise ProtocolError("successful hello contains an error")
+
+    cursor = _HELLO.size
+    images: list[WireImageSpec] = []
+    for _ in range(image_count):
+        descriptor = _take(payload, cursor, _HELLO_IMAGE.size, "image specification")
+        cursor += _HELLO_IMAGE.size
+        name_size, channels, height, width = _HELLO_IMAGE.unpack(descriptor)
+        name_bytes = _take(payload, cursor, name_size, "image specification name")
+        cursor += name_size
+        try:
+            name = name_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ProtocolError("image specification name is not UTF-8") from exc
+        images.append(WireImageSpec(name, channels, height, width))
+    if cursor != len(payload):
+        raise ProtocolError("hello contains trailing bytes")
+    return WireHello(chunk_size, model_dim, robot_dim, state_dim, tuple(images))
 
 
 def encode_request(request: WireRequest) -> bytes:

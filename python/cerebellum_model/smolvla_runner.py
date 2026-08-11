@@ -98,12 +98,22 @@ class SmolVLARunner:
     def robot_action_dim(self) -> int:
         return int(self.policy.config.action_feature.shape[0])
 
+    @property
+    def state_dim(self) -> int:
+        return int(self.policy.config.robot_state_feature.shape[0])
+
+    @property
+    def image_shapes(self) -> dict[str, tuple[int, int, int]]:
+        return {
+            name: tuple(int(value) for value in feature.shape)
+            for name, feature in self.policy.config.image_features.items()
+        }
+
     def synthetic_observation(self, *, seed: int = 0) -> Observation:
         """Build deterministic, correctly named inputs from the checkpoint config."""
 
         rng = np.random.default_rng(seed)
-        state_dim = int(self.policy.config.robot_state_feature.shape[0])
-        state = rng.standard_normal(state_dim, dtype=np.float32)
+        state = rng.standard_normal(self.state_dim, dtype=np.float32)
         images = {
             name: rng.random(feature.shape, dtype=np.float32)
             for name, feature in self.policy.config.image_features.items()

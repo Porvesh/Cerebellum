@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
@@ -53,7 +54,8 @@ PythonChunkGeneratorOptions options() {
     PythonChunkGeneratorOptions value;
     value.python_executable = CEREBELLUM_TEST_PYTHON;
     value.python_package_path = CEREBELLUM_TEST_PYTHONPATH;
-    value.timeout = std::chrono::seconds(5);
+    value.startup_timeout = std::chrono::seconds(5);
+    value.inference_timeout = std::chrono::seconds(5);
     value.seed = 9;
     return value;
 }
@@ -103,7 +105,7 @@ void test_missing_worker_fails_at_startup() {
     StaticObservationSource source(observation());
     auto bad_options = options();
     bad_options.python_executable = "/definitely/not/a/python";
-    bad_options.timeout = std::chrono::milliseconds(500);
+    bad_options.startup_timeout = std::chrono::milliseconds(500);
     bool threw = false;
     try {
         PythonChunkGenerator generator(config, source, bad_options);
@@ -164,6 +166,63 @@ void test_missing_observation_does_not_break_worker() {
     CHECK(generator.generate(request, chunk));
 }
 
+std::shared_ptr<const ObservationSnapshot> observation_for(
+    const WorkerObservationSchema& schema) {
+    auto value = std::make_shared<ObservationSnapshot>();
+    value->sequence = 101;
+    value->capture_time = now();
+    value->state.assign(schema.state_dim, 0.0F);
+    value->task = "move the object to the target";
+    for (const WorkerImageSpec& expected : schema.images) {
+        CameraImage image;
+        image.feature_name = expected.feature_name;
+        image.channels = expected.channels;
+        image.height = expected.height;
+        image.width = expected.width;
+        image.pixels.resize(static_cast<std::size_t>(image.channels) * image.height * image.width);
+        value->images.push_back(std::move(image));
+    }
+    value->validate();
+    return value;
+}
+
+void test_real_smolvla_bridge_when_requested() {
+    const char* enabled = std::getenv("CEREBELLUM_RUN_SMOLVLA_BRIDGE");
+    if (!enabled || std::string(enabled) != "1") return;
+
+    RuntimeConfig config;
+    StaticObservationSource source(nullptr);
+    auto real_options = options();
+    real_options.runner = PythonRunner::SmolVla;
+    real_options.device = std::getenv("CEREBELLUM_SMOLVLA_DEVICE")
+                              ? std::getenv("CEREBELLUM_SMOLVLA_DEVICE")
+                              : "cpu";
+    real_options.local_files_only = true;
+    real_options.startup_timeout = std::chrono::minutes(15);
+    real_options.inference_timeout = std::chrono::minutes(2);
+
+    PythonChunkGenerator generator(config, source, real_options);
+    CHECK(generator.observation_schema().state_dim == 6);
+    CHECK(generator.observation_schema().images.size() == 3);
+    for (const WorkerImageSpec& image : generator.observation_schema().images) {
+        CHECK(image.channels == 3);
+        CHECK(image.height == 256);
+        CHECK(image.width == 256);
+    }
+    Chunk chunk;
+    source.publish(observation());
+    CHECK(!generator.generate(
+        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
+    CHECK(generator.healthy());
+    CHECK(generator.last_error().find("schema") != std::string::npos);
+
+    source.publish(observation_for(generator.observation_schema()));
+    CHECK(generator.generate(
+        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
+    CHECK(chunk.count == 50);
+    CHECK(chunk.stamps.obs_seq == 101);
+}
+
 }  // namespace
 
 int main() {
@@ -172,6 +231,7 @@ int main() {
     test_unimplemented_rtc_is_explicit_and_recoverable();
     test_runtime_publishes_python_chunk_to_control();
     test_missing_observation_does_not_break_worker();
+    test_real_smolvla_bridge_when_requested();
 
     if (g_failures == 0) {
         std::printf("test_python_chunk_generator: all checks passed\n");

@@ -84,9 +84,22 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-The bridge currently uses an in-memory observation source and the synthetic runner. An Axon-backed
-source for Retina observations and selecting the real SmolVLA runner are the next integration
-steps. RTC requests are rejected explicitly until committed-prefix conditioning is implemented.
+The bridge currently uses an in-memory observation source. The worker can run either the fast
+synthetic backend or the real SmolVLA checkpoint; SmolVLA advertises its state and camera schema
+during startup, and C++ rejects mismatched observations before sending inference requests. RTC
+requests are rejected explicitly until committed-prefix conditioning is implemented.
+
+The real cross-process C++ → SmolVLA → C++ test is opt-in because it loads the checkpoint:
+
+```bash
+HF_HOME=/path/to/huggingface/cache \
+CEREBELLUM_RUN_SMOLVLA_BRIDGE=1 \
+CEREBELLUM_SMOLVLA_DEVICE=cpu \
+./build/test_python_chunk_generator
+```
+
+Use `CEREBELLUM_SMOLVLA_DEVICE=cuda` when a GPU has enough free memory. Model startup and
+per-request inference use separate configurable timeouts in `PythonChunkGeneratorOptions`.
 
 Run the dependency-light contract tests:
 

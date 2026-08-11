@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import struct
 import sys
+from typing import Any
 import zlib
 
 import numpy as np
@@ -12,6 +14,7 @@ import numpy as np
 from .messages import InferenceRequest, Observation
 from .protocol import (
     ProtocolError,
+    WireImageSpec,
     WireResponse,
     WireRequest,
     decode_request,
@@ -25,6 +28,44 @@ from .protocol import (
 from .runner import SyntheticRunner
 
 _STITCHING = {0: "discard", 1: "ensemble", 2: "rtc"}
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerSpec:
+    chunk_size: int
+    model_dim: int
+    robot_dim: int
+    state_dim: int = 0
+    images: tuple[WireImageSpec, ...] = ()
+
+
+def _make_runner(args: argparse.Namespace) -> tuple[Any, RunnerSpec, bool]:
+    if args.runner == "synthetic":
+        runner = SyntheticRunner(model_dim=args.model_dim, robot_dim=args.robot_dim)
+        return runner, RunnerSpec(args.chunk_size, args.model_dim, args.robot_dim), True
+
+    from .smolvla_runner import SmolVLARunner
+
+    runner = SmolVLARunner.from_pretrained(
+        args.model,
+        device=args.device,
+        local_files_only=args.local_files_only,
+    )
+    images = tuple(
+        WireImageSpec(name, shape[0], shape[1], shape[2])
+        for name, shape in runner.image_shapes.items()
+    )
+    return (
+        runner,
+        RunnerSpec(
+            runner.chunk_size,
+            runner.model_action_dim,
+            runner.robot_action_dim,
+            runner.state_dim,
+            images,
+        ),
+        False,
+    )
 
 
 def _observation_from_wire(wire: WireRequest) -> Observation:
@@ -44,6 +85,28 @@ def _observation_from_wire(wire: WireRequest) -> Observation:
     )
 
 
+def _validate_observation_schema(wire: WireRequest, spec: RunnerSpec) -> None:
+    if spec.state_dim == 0 and not spec.images:
+        return
+    observation = wire.observation
+    if observation.state.shape != (spec.state_dim,):
+        raise ProtocolError(
+            f"state shape {observation.state.shape} does not match ({spec.state_dim},)"
+        )
+    received = {
+        image.feature_name: (image.channels, image.height, image.width)
+        for image in observation.images
+    }
+    if len(received) != len(observation.images):
+        raise ProtocolError("observation contains duplicate image names")
+    expected = {
+        image.feature_name: (image.channels, image.height, image.width)
+        for image in spec.images
+    }
+    if received != expected:
+        raise ProtocolError(f"image schema {received} does not match {expected}")
+
+
 def _seed_for_observation(wire: WireRequest) -> int:
     """Make synthetic output depend on every transported observation value."""
 
@@ -59,20 +122,28 @@ def _seed_for_observation(wire: WireRequest) -> int:
     return (wire.seed ^ checksum) & 0xFFFFFFFF
 
 
-def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
+def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
     source = sys.stdin.buffer
     sink = sys.stdout.buffer
-    runner = SyntheticRunner(model_dim=model_dim, robot_dim=robot_dim)
-    write_frame(sink, encode_hello(chunk_size=chunk_size, model_dim=model_dim, robot_dim=robot_dim))
+    write_frame(
+        sink,
+        encode_hello(
+            chunk_size=spec.chunk_size,
+            model_dim=spec.model_dim,
+            robot_dim=spec.robot_dim,
+            state_dim=spec.state_dim,
+            images=spec.images,
+        ),
+    )
 
     while (payload := read_frame(source)) is not None:
         request_id = 0
         try:
             wire = decode_request(payload)
             request_id = wire.request_id
-            if wire.action_count != chunk_size:
+            if wire.action_count != spec.chunk_size:
                 raise ProtocolError(
-                    f"requested {wire.action_count} actions, worker provides {chunk_size}"
+                    f"requested {wire.action_count} actions, worker provides {spec.chunk_size}"
                 )
             try:
                 stitching = _STITCHING[wire.stitching]
@@ -80,6 +151,7 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
                 raise ProtocolError(f"unknown stitching value: {wire.stitching}") from exc
             if stitching == "rtc":
                 raise NotImplementedError("RTC conditioning is not implemented")
+            _validate_observation_schema(wire, spec)
             observation = _observation_from_wire(wire)
             result = runner.predict(
                 InferenceRequest(
@@ -89,7 +161,7 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
                     stitching=stitching,
                 ),
                 observation,
-                seed=_seed_for_observation(wire),
+                seed=_seed_for_observation(wire) if synthetic_seed else wire.seed,
             )
             response = WireResponse(
                 request_id=wire.request_id,
@@ -108,19 +180,17 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runner", choices=("synthetic",), default="synthetic")
+    parser.add_argument("--runner", choices=("synthetic", "smolvla"), default="synthetic")
     parser.add_argument("--chunk-size", type=int, default=50)
     parser.add_argument("--model-dim", type=int, default=32)
     parser.add_argument("--robot-dim", type=int, default=6)
+    parser.add_argument("--model", default="lerobot/smolvla_base")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--local-files-only", action="store_true")
     args = parser.parse_args()
     try:
-        raise SystemExit(
-            serve(
-                chunk_size=args.chunk_size,
-                model_dim=args.model_dim,
-                robot_dim=args.robot_dim,
-            )
-        )
+        runner, spec, synthetic_seed = _make_runner(args)
+        raise SystemExit(serve(runner=runner, spec=spec, synthetic_seed=synthetic_seed))
     except Exception as exc:
         try:
             write_frame(sys.stdout.buffer, encode_hello_error(str(exc)))
