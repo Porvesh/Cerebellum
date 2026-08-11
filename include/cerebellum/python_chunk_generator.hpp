@@ -6,6 +6,7 @@
 #include <string>
 
 #include "cerebellum/loop.hpp"
+#include "cerebellum/observation.hpp"
 
 namespace cerebellum {
 
@@ -21,7 +22,8 @@ struct PythonChunkGeneratorOptions {
 // generate() is called only by RuntimeLoop's non-real-time inference worker.
 class PythonChunkGenerator final : public ChunkGenerator {
 public:
-    PythonChunkGenerator(const RuntimeConfig& config, PythonChunkGeneratorOptions options = {});
+    PythonChunkGenerator(const RuntimeConfig& config, ObservationSource& observations,
+                         PythonChunkGeneratorOptions options = {});
     ~PythonChunkGenerator() override;
 
     PythonChunkGenerator(const PythonChunkGenerator&) = delete;
@@ -43,6 +45,7 @@ private:
     void stop_child() noexcept;
 
     RuntimeConfig config_;
+    ObservationSource& observations_;
     PythonChunkGeneratorOptions options_;
     int socket_ = -1;
     int child_pid_ = -1;

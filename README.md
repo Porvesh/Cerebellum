@@ -64,9 +64,11 @@ never blocks on the GPU.**
 The standalone phase-1 skeleton is implemented: configuration validation, fixed-grid timing,
 a lock-free action-chunk queue, and the two-thread control/inference runtime. A persistent,
 framed local-process bridge now connects C++ `ChunkGenerator::generate()` to a synthetic Python
-worker. Its versioned handshake rejects mismatched chunk and action dimensions before control
-starts. The Python model side also loads `lerobot/smolvla_base` and returns both representations
-needed by the system:
+worker. Each request carries an immutable observation snapshot containing robot state, task text,
+and camera-native HWC bytes; Python converts the images to CHW floats for the runner. Its
+versioned handshake rejects mismatched chunk and action dimensions before control starts. The
+Python model side also loads `lerobot/smolvla_base` and returns both representations needed by
+the system:
 
 - `model_actions`: `50 × 32`, padded model space retained for future RTC conditioning.
 - `robot_actions`: `50 × 6`, sliced and postprocessed for execution.
@@ -82,9 +84,9 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-The bridge currently creates a synthetic observation inside Python. Sending live camera/state
-observations and selecting the real SmolVLA runner are the next integration step. RTC requests
-are rejected explicitly until committed-prefix conditioning is implemented.
+The bridge currently uses an in-memory observation source and the synthetic runner. An Axon-backed
+source for Retina observations and selecting the real SmolVLA runner are the next integration
+steps. RTC requests are rejected explicitly until committed-prefix conditioning is implemented.
 
 Run the dependency-light contract tests:
 

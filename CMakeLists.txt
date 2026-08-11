@@ -43,6 +43,10 @@ add_executable(test_loop tests/test_loop.cpp)
 target_link_libraries(test_loop PRIVATE cerebellum_core Threads::Threads)
 add_test(NAME loop COMMAND test_loop)
 
+add_executable(test_observation tests/test_observation.cpp)
+target_link_libraries(test_observation PRIVATE cerebellum_core)
+add_test(NAME observation COMMAND test_observation)
+
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_executable(test_python_chunk_generator tests/test_python_chunk_generator.cpp)
 target_link_libraries(test_python_chunk_generator PRIVATE cerebellum_python_bridge)

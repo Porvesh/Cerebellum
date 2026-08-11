@@ -7,13 +7,15 @@ import struct
 from typing import BinaryIO
 
 import numpy as np
+from numpy.typing import NDArray
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 _FRAME = struct.Struct(">I")
 _HELLO = struct.Struct(">4sHBBIHHI")
-_REQUEST = struct.Struct(">4sHBBQqqII")
+_REQUEST = struct.Struct(">4sHBBQqqIIQqIHI")
+_IMAGE = struct.Struct(">HHHHI")
 _RESPONSE = struct.Struct(">4sHBBQqQqIHHI")
 
 HELLO_MAGIC = b"CBHI"
@@ -26,6 +28,24 @@ class ProtocolError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class WireImage:
+    feature_name: str
+    channels: int
+    height: int
+    width: int
+    pixels: NDArray[np.uint8]
+
+
+@dataclass(frozen=True, slots=True)
+class WireObservation:
+    sequence: int
+    capture_ns: int
+    state: NDArray[np.float32]
+    images: tuple[WireImage, ...]
+    task: str
+
+
+@dataclass(frozen=True, slots=True)
 class WireRequest:
     request_id: int
     first_step: int
@@ -33,6 +53,7 @@ class WireRequest:
     action_count: int
     stitching: int
     seed: int
+    observation: WireObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,8 +62,8 @@ class WireResponse:
     first_step: int
     observation_sequence: int
     capture_ns: int
-    model_actions: np.ndarray
-    robot_actions: np.ndarray
+    model_actions: NDArray[np.float32]
+    robot_actions: NDArray[np.float32]
 
 
 def read_frame(stream: BinaryIO) -> bytes | None:
@@ -74,17 +95,131 @@ def encode_hello_error(message: str) -> bytes:
     return _HELLO.pack(HELLO_MAGIC, PROTOCOL_VERSION, 1, 0, 0, 0, 0, len(detail)) + detail
 
 
-def decode_request(payload: bytes) -> WireRequest:
-    if len(payload) != _REQUEST.size:
-        raise ProtocolError(f"request has {len(payload)} bytes, expected {_REQUEST.size}")
-    magic, version, stitching, _reserved, request_id, first, last, count, seed = (
-        _REQUEST.unpack(payload)
+def encode_request(request: WireRequest) -> bytes:
+    observation = request.observation
+    state = np.ascontiguousarray(observation.state, dtype=np.float32)
+    if state.ndim != 1:
+        raise ProtocolError("state must be rank 1")
+    task = observation.task.encode("utf-8")
+    if not task:
+        raise ProtocolError("task is empty")
+    if state.size > 0xFFFFFFFF or len(task) > 0xFFFFFFFF:
+        raise ProtocolError("state or task exceeds protocol limits")
+    if len(observation.images) > 0xFFFF:
+        raise ProtocolError("too many images")
+
+    payload = bytearray(
+        _REQUEST.pack(
+            REQUEST_MAGIC,
+            PROTOCOL_VERSION,
+            request.stitching,
+            0,
+            request.request_id,
+            request.first_step,
+            request.last_emitted_step,
+            request.action_count,
+            request.seed,
+            observation.sequence,
+            observation.capture_ns,
+            state.size,
+            len(observation.images),
+            len(task),
+        )
     )
+    payload.extend(state.astype(">f4", copy=False).tobytes())
+    payload.extend(task)
+    for image in observation.images:
+        name = image.feature_name.encode("utf-8")
+        pixels = np.ascontiguousarray(image.pixels, dtype=np.uint8).reshape(-1)
+        expected = image.channels * image.height * image.width
+        dimensions_fit = all(0 < value <= 0xFFFF for value in (
+            image.channels, image.height, image.width
+        ))
+        if (
+            not name
+            or len(name) > 0xFFFF
+            or pixels.size > 0xFFFFFFFF
+            or pixels.size != expected
+            or not dimensions_fit
+        ):
+            raise ProtocolError("invalid image name, dimensions, or pixel count")
+        payload.extend(
+            _IMAGE.pack(
+                len(name), image.channels, image.height, image.width, pixels.size
+            )
+        )
+        payload.extend(name)
+        payload.extend(pixels.tobytes())
+    if len(payload) > MAX_FRAME_BYTES:
+        raise ProtocolError(f"request is too large: {len(payload)} bytes")
+    return bytes(payload)
+
+
+def decode_request(payload: bytes) -> WireRequest:
+    if len(payload) < _REQUEST.size:
+        raise ProtocolError("request header is truncated")
+    (
+        magic,
+        version,
+        stitching,
+        _reserved,
+        request_id,
+        first,
+        last,
+        count,
+        seed,
+        sequence,
+        capture_ns,
+        state_count,
+        image_count,
+        task_size,
+    ) = _REQUEST.unpack_from(payload)
     if magic != REQUEST_MAGIC:
         raise ProtocolError("bad request magic")
     if version != PROTOCOL_VERSION:
         raise ProtocolError(f"unsupported protocol version: {version}")
-    return WireRequest(request_id, first, last, count, stitching, seed)
+
+    cursor = _REQUEST.size
+    state_bytes = _take(payload, cursor, state_count * 4, "state")
+    cursor += state_count * 4
+    state = np.frombuffer(state_bytes, dtype=">f4").astype(np.float32)
+    task_bytes = _take(payload, cursor, task_size, "task")
+    cursor += task_size
+    try:
+        task = task_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ProtocolError("task is not UTF-8") from exc
+
+    images: list[WireImage] = []
+    for _ in range(image_count):
+        descriptor = _take(payload, cursor, _IMAGE.size, "image descriptor")
+        cursor += _IMAGE.size
+        name_size, channels, height, width, pixel_count = _IMAGE.unpack(descriptor)
+        if pixel_count != channels * height * width:
+            raise ProtocolError("image pixel count does not match dimensions")
+        name_bytes = _take(payload, cursor, name_size, "image name")
+        cursor += name_size
+        pixels = np.frombuffer(
+            _take(payload, cursor, pixel_count, "image pixels"), dtype=np.uint8
+        ).copy()
+        cursor += pixel_count
+        try:
+            name = name_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ProtocolError("image name is not UTF-8") from exc
+        images.append(WireImage(name, channels, height, width, pixels))
+    if cursor != len(payload):
+        raise ProtocolError("request contains trailing bytes")
+
+    return WireRequest(
+        request_id,
+        first,
+        last,
+        count,
+        stitching,
+        seed,
+        WireObservation(sequence, capture_ns, state, tuple(images), task),
+    )
 
 
 def encode_response(response: WireResponse) -> bytes:
@@ -116,6 +251,12 @@ def encode_response_error(request_id: int, message: str) -> bytes:
     return _RESPONSE.pack(
         RESPONSE_MAGIC, PROTOCOL_VERSION, 1, 0, request_id, 0, 0, 0, 0, 0, 0, len(detail)
     ) + detail
+
+
+def _take(payload: bytes, offset: int, size: int, label: str) -> bytes:
+    if size < 0 or offset > len(payload) or size > len(payload) - offset:
+        raise ProtocolError(f"{label} is truncated")
+    return payload[offset : offset + size]
 
 
 def _read_exact(stream: BinaryIO, size: int, *, eof_ok: bool = False) -> bytes | None:

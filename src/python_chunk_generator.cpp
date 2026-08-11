@@ -24,7 +24,7 @@ extern char** environ;
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 1;
+constexpr std::uint16_t kProtocolVersion = 2;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBHI";
 constexpr std::string_view kRequestMagic = "CBRQ";
@@ -43,6 +43,13 @@ void append_u32(std::string& out, std::uint32_t value) {
 void append_u64(std::string& out, std::uint64_t value) {
     append_u32(out, static_cast<std::uint32_t>(value >> 32));
     append_u32(out, static_cast<std::uint32_t>(value));
+}
+
+void append_f32(std::string& out, float value) {
+    std::uint32_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value));
+    std::memcpy(&bits, &value, sizeof(bits));
+    append_u32(out, bits);
 }
 
 class Reader {
@@ -105,8 +112,9 @@ std::uint8_t stitching_value(Stitching stitching) {
 }  // namespace
 
 PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
+                                           ObservationSource& observations,
                                            PythonChunkGeneratorOptions options)
-    : config_(config), options_(std::move(options)) {
+    : config_(config), observations_(observations), options_(std::move(options)) {
     config_.validate();
     if (options_.timeout <= std::chrono::milliseconds::zero()) {
         throw std::invalid_argument("Python worker timeout must be positive");
@@ -183,9 +191,28 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
             return false;
         }
 
+        const std::shared_ptr<const ObservationSnapshot> observation = observations_.latest();
+        if (!observation) {
+            last_error_ = "no observation is available";
+            return false;
+        }
+        try {
+            observation->validate();
+        } catch (const std::exception& exc) {
+            last_error_ = std::string("invalid observation: ") + exc.what();
+            return false;
+        }
+        if (observation->state.size() > std::numeric_limits<std::uint32_t>::max() ||
+            observation->images.size() > std::numeric_limits<std::uint16_t>::max() ||
+            observation->task.size() > std::numeric_limits<std::uint32_t>::max()) {
+            last_error_ = "observation metadata exceeds protocol limits";
+            return false;
+        }
+
         const std::uint64_t request_id = next_request_id_++;
         std::string payload;
-        payload.reserve(40);
+        payload.reserve(66 + observation->state.size() * sizeof(float) +
+                        observation->task.size());
         payload.append(kRequestMagic);
         append_u16(payload, kProtocolVersion);
         payload.push_back(static_cast<char>(stitching_value(request.stitching)));
@@ -195,6 +222,28 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         append_u64(payload, static_cast<std::uint64_t>(request.last_emitted_step));
         append_u32(payload, static_cast<std::uint32_t>(request.action_count));
         append_u32(payload, options_.seed);
+        append_u64(payload, observation->sequence);
+        append_u64(payload, static_cast<std::uint64_t>(std::chrono::duration_cast<Nanos>(
+                                observation->capture_time.time_since_epoch()).count()));
+        append_u32(payload, static_cast<std::uint32_t>(observation->state.size()));
+        append_u16(payload, static_cast<std::uint16_t>(observation->images.size()));
+        append_u32(payload, static_cast<std::uint32_t>(observation->task.size()));
+        for (float value : observation->state) append_f32(payload, value);
+        payload.append(observation->task);
+        for (const CameraImage& image : observation->images) {
+            if (image.feature_name.size() > std::numeric_limits<std::uint16_t>::max() ||
+                image.pixels.size() > std::numeric_limits<std::uint32_t>::max()) {
+                last_error_ = "camera metadata exceeds protocol limits";
+                return false;
+            }
+            append_u16(payload, static_cast<std::uint16_t>(image.feature_name.size()));
+            append_u16(payload, image.channels);
+            append_u16(payload, image.height);
+            append_u16(payload, image.width);
+            append_u32(payload, static_cast<std::uint32_t>(image.pixels.size()));
+            payload.append(image.feature_name);
+            payload.append(reinterpret_cast<const char*>(image.pixels.data()), image.pixels.size());
+        }
         if (!write_frame(payload.data(), payload.size())) return false;
 
         std::string response;

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import struct
 import sys
-from time import monotonic_ns
+import zlib
 
 import numpy as np
 
@@ -12,6 +13,7 @@ from .messages import InferenceRequest, Observation
 from .protocol import (
     ProtocolError,
     WireResponse,
+    WireRequest,
     decode_request,
     encode_hello,
     encode_hello_error,
@@ -25,14 +27,36 @@ from .runner import SyntheticRunner
 _STITCHING = {0: "discard", 1: "ensemble", 2: "rtc"}
 
 
-def _synthetic_observation(sequence: int) -> Observation:
+def _observation_from_wire(wire: WireRequest) -> Observation:
+    observation = wire.observation
+    images = {}
+    for image in observation.images:
+        hwc = image.pixels.reshape(image.height, image.width, image.channels)
+        images[image.feature_name] = np.ascontiguousarray(
+            hwc.transpose(2, 0, 1), dtype=np.float32
+        ) / np.float32(255.0)
     return Observation(
-        sequence=sequence,
-        capture_ns=monotonic_ns(),
-        state=np.zeros(6, dtype=np.float32),
-        images={"observation.images.camera1": np.zeros((3, 8, 8), dtype=np.float32)},
-        task="synthetic transport test",
+        sequence=observation.sequence,
+        capture_ns=observation.capture_ns,
+        state=observation.state,
+        images=images,
+        task=observation.task,
     )
+
+
+def _seed_for_observation(wire: WireRequest) -> int:
+    """Make synthetic output depend on every transported observation value."""
+
+    observation = wire.observation
+    checksum = zlib.crc32(observation.state.astype(">f4", copy=False).tobytes())
+    checksum = zlib.crc32(observation.task.encode("utf-8"), checksum)
+    for image in observation.images:
+        checksum = zlib.crc32(image.feature_name.encode("utf-8"), checksum)
+        checksum = zlib.crc32(
+            struct.pack(">HHH", image.channels, image.height, image.width), checksum
+        )
+        checksum = zlib.crc32(image.pixels.tobytes(), checksum)
+    return (wire.seed ^ checksum) & 0xFFFFFFFF
 
 
 def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
@@ -41,7 +65,6 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
     runner = SyntheticRunner(model_dim=model_dim, robot_dim=robot_dim)
     write_frame(sink, encode_hello(chunk_size=chunk_size, model_dim=model_dim, robot_dim=robot_dim))
 
-    sequence = 0
     while (payload := read_frame(source)) is not None:
         request_id = 0
         try:
@@ -57,8 +80,7 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
                 raise ProtocolError(f"unknown stitching value: {wire.stitching}") from exc
             if stitching == "rtc":
                 raise NotImplementedError("RTC conditioning is not implemented")
-            observation = _synthetic_observation(sequence)
-            sequence += 1
+            observation = _observation_from_wire(wire)
             result = runner.predict(
                 InferenceRequest(
                     first_step=wire.first_step,
@@ -67,7 +89,7 @@ def serve(*, chunk_size: int, model_dim: int, robot_dim: int) -> int:
                     stitching=stitching,
                 ),
                 observation,
-                seed=wire.seed,
+                seed=_seed_for_observation(wire),
             )
             response = WireResponse(
                 request_id=wire.request_id,
