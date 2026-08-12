@@ -101,6 +101,24 @@ CEREBELLUM_SMOLVLA_DEVICE=cpu \
 Use `CEREBELLUM_SMOLVLA_DEVICE=cuda` when a GPU has enough free memory. Model startup and
 per-request inference use separate configurable timeouts in `PythonChunkGeneratorOptions`.
 
+Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
+
+```bash
+# Cerebellum transport/runtime baseline without model cost
+./build/bench_bridge --runner synthetic --device cpu --warmup 10 --iterations 100
+
+# Real model split: total, model, and total-minus-model Cerebellum overhead
+CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
+  ./build/bench_bridge --runner smolvla --device cuda \
+  --warmup 10 --iterations 100 --output results/smolvla_h100_baseline.json
+```
+
+The report gives p50/p90/p99/max from C++ observation lookup to a decoded chunk, the Python
+model call, Cerebellum overhead, and each serialization/IPC/conversion stage. The headline
+overhead is computed per request as `total - model`; `response_wait` intentionally contains
+the Python stages and therefore must not be added to them again. Observation-capture-to-action
+staleness remains a separate control-loop metric.
+
 Run the dependency-light contract tests:
 
 ```bash

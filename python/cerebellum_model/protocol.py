@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import struct
+from time import monotonic_ns
 from typing import BinaryIO
 
 import numpy as np
 from numpy.typing import NDArray
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 _FRAME = struct.Struct(">I")
@@ -17,7 +18,8 @@ _HELLO = struct.Struct(">4sHBBIHHHHI")
 _HELLO_IMAGE = struct.Struct(">HHHH")
 _REQUEST = struct.Struct(">4sHBBQqqIIQqIHI")
 _IMAGE = struct.Struct(">HHHHI")
-_RESPONSE = struct.Struct(">4sHBBQqQqIHHI")
+_RESPONSE = struct.Struct(">4sHBBQqQqIHHQQQQI")
+_RESPONSE_ENCODE_NS_OFFSET = struct.calcsize(">4sHBBQqQqIHHQQQ")
 
 HELLO_MAGIC = b"CBHI"
 REQUEST_MAGIC = b"CBRQ"
@@ -75,6 +77,14 @@ class WireRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class WireTiming:
+    request_decode_ns: int = 0
+    observation_ns: int = 0
+    model_ns: int = 0
+    response_encode_ns: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class WireResponse:
     request_id: int
     first_step: int
@@ -82,6 +92,7 @@ class WireResponse:
     capture_ns: int
     model_actions: NDArray[np.float32]
     robot_actions: NDArray[np.float32]
+    timing: WireTiming = WireTiming()
 
 
 def read_frame(stream: BinaryIO) -> bytes | None:
@@ -321,33 +332,60 @@ def decode_request(payload: bytes) -> WireRequest:
 
 
 def encode_response(response: WireResponse) -> bytes:
+    started = monotonic_ns()
     model = np.asarray(response.model_actions, dtype=np.float32)
     robot = np.asarray(response.robot_actions, dtype=np.float32)
     if model.ndim != 2 or robot.ndim != 2 or model.shape[0] != robot.shape[0]:
         raise ProtocolError("response action arrays have incompatible shapes")
     count, model_dim = model.shape
     robot_dim = robot.shape[1]
-    header = _RESPONSE.pack(
-        RESPONSE_MAGIC,
-        PROTOCOL_VERSION,
-        0,
-        0,
-        response.request_id,
-        response.first_step,
-        response.observation_sequence,
-        response.capture_ns,
-        count,
-        model_dim,
-        robot_dim,
-        0,
+    payload = bytearray(
+        _RESPONSE.pack(
+            RESPONSE_MAGIC,
+            PROTOCOL_VERSION,
+            0,
+            0,
+            response.request_id,
+            response.first_step,
+            response.observation_sequence,
+            response.capture_ns,
+            count,
+            model_dim,
+            robot_dim,
+            response.timing.request_decode_ns,
+            response.timing.observation_ns,
+            response.timing.model_ns,
+            0,
+            0,
+        )
     )
-    return header + model.astype(">f4", copy=False).tobytes() + robot.astype(">f4", copy=False).tobytes()
+    payload.extend(model.astype(">f4", copy=False).tobytes())
+    payload.extend(robot.astype(">f4", copy=False).tobytes())
+    struct.pack_into(
+        ">Q", payload, _RESPONSE_ENCODE_NS_OFFSET, monotonic_ns() - started
+    )
+    return bytes(payload)
 
 
 def encode_response_error(request_id: int, message: str) -> bytes:
     detail = message.encode("utf-8")
     return _RESPONSE.pack(
-        RESPONSE_MAGIC, PROTOCOL_VERSION, 1, 0, request_id, 0, 0, 0, 0, 0, 0, len(detail)
+        RESPONSE_MAGIC,
+        PROTOCOL_VERSION,
+        1,
+        0,
+        request_id,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        len(detail),
     ) + detail
 
 

@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass
 import struct
 import sys
+from time import monotonic_ns
 from typing import Any
 import zlib
 
@@ -17,6 +18,7 @@ from .protocol import (
     WireImageSpec,
     WireResponse,
     WireRequest,
+    WireTiming,
     decode_request,
     encode_hello,
     encode_hello_error,
@@ -139,7 +141,9 @@ def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
     while (payload := read_frame(source)) is not None:
         request_id = 0
         try:
+            decode_started = monotonic_ns()
             wire = decode_request(payload)
+            decode_ns = monotonic_ns() - decode_started
             request_id = wire.request_id
             if wire.action_count != spec.chunk_size:
                 raise ProtocolError(
@@ -151,8 +155,11 @@ def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
                 raise ProtocolError(f"unknown stitching value: {wire.stitching}") from exc
             if stitching == "rtc":
                 raise NotImplementedError("RTC conditioning is not implemented")
+            observation_started = monotonic_ns()
             _validate_observation_schema(wire, spec)
             observation = _observation_from_wire(wire)
+            observation_ns = monotonic_ns() - observation_started
+            model_started = monotonic_ns()
             result = runner.predict(
                 InferenceRequest(
                     first_step=wire.first_step,
@@ -163,6 +170,7 @@ def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
                 observation,
                 seed=_seed_for_observation(wire) if synthetic_seed else wire.seed,
             )
+            model_ns = monotonic_ns() - model_started
             response = WireResponse(
                 request_id=wire.request_id,
                 first_step=result.first_step,
@@ -170,6 +178,7 @@ def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
                 capture_ns=observation.capture_ns,
                 model_actions=result.model_actions,
                 robot_actions=result.robot_actions,
+                timing=WireTiming(decode_ns, observation_ns, model_ns),
             )
             write_frame(sink, encode_response(response))
         except Exception as exc:  # keep one bad request from killing the worker

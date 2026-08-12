@@ -27,6 +27,28 @@ struct WorkerObservationSchema {
     bool constrained() const noexcept { return state_dim != 0 || !images.empty(); }
 };
 
+// One successful generate() call, split at boundaries owned by Cerebellum and
+// by the Python model worker. `total - python_model` is the headline
+// Cerebellum overhead; the individual fields explain where that overhead went.
+struct BridgeTiming {
+    std::uint64_t request_id = 0;
+    std::int64_t total_ns = 0;
+    std::int64_t observation_lookup_ns = 0;
+    std::int64_t observation_validation_ns = 0;
+    std::int64_t request_encode_ns = 0;
+    std::int64_t request_write_ns = 0;
+    std::int64_t response_wait_ns = 0;
+    std::int64_t response_decode_ns = 0;
+    std::int64_t python_request_decode_ns = 0;
+    std::int64_t python_observation_ns = 0;
+    std::int64_t python_model_ns = 0;
+    std::int64_t python_response_encode_ns = 0;
+
+    std::int64_t cerebellum_overhead_ns() const noexcept {
+        return total_ns > python_model_ns ? total_ns - python_model_ns : 0;
+    }
+};
+
 struct PythonChunkGeneratorOptions {
     std::string python_executable = "python3";
     std::string python_package_path = "python";
@@ -56,6 +78,7 @@ public:
     bool healthy() const noexcept { return socket_ >= 0; }
     const std::string& last_error() const noexcept { return last_error_; }
     const WorkerObservationSchema& observation_schema() const noexcept { return schema_; }
+    const BridgeTiming& last_timing() const noexcept { return last_timing_; }
 
 private:
     bool read_handshake();
@@ -77,6 +100,7 @@ private:
     int child_pid_ = -1;
     std::uint64_t next_request_id_ = 1;
     std::string last_error_;
+    BridgeTiming last_timing_{};
 };
 
 }  // namespace cerebellum

@@ -13,6 +13,7 @@ from cerebellum_model.protocol import (
     WireObservation,
     WireRequest,
     WireResponse,
+    WireTiming,
     decode_hello,
     decode_request,
     encode_hello,
@@ -116,8 +117,13 @@ def test_request_round_trips_every_observation_value() -> None:
 def test_response_contains_both_action_spaces() -> None:
     model = np.arange(12, dtype=np.float32).reshape(2, 6)
     robot = (model[:, :2] + 100).copy()
-    payload = encode_response(WireResponse(4, 10, 3, 99, model, robot))
-    header_size = struct.calcsize(">4sHBBQqQqIHHI")
+    timing = WireTiming(11, 22, 33)
+    payload = encode_response(WireResponse(4, 10, 3, 99, model, robot, timing))
+    header_format = ">4sHBBQqQqIHHQQQQI"
+    header_size = struct.calcsize(header_format)
+    header = struct.unpack_from(header_format, payload)
+    assert header[11:14] == (11, 22, 33)
+    assert header[14] > 0
     assert len(payload) == header_size + model.nbytes + robot.nbytes
     assert payload[header_size:] == model.astype(">f4").tobytes() + robot.astype(">f4").tobytes()
 

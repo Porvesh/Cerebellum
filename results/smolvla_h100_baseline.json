@@ -1,0 +1,22 @@
+{
+  "runner": "smolvla",
+  "device": "cuda",
+  "warmup": 10,
+  "iterations": 100,
+  "units": "milliseconds",
+  "metrics": {
+    "total_observation_lookup_to_chunk": {"p50": 149.389478, "p90": 152.406193, "p99": 153.657071, "max": 154.329104},
+    "python_model": {"p50": 148.264274, "p90": 151.306729, "p99": 152.596747, "max": 153.231321},
+    "cerebellum_overhead": {"p50": 1.085213, "p90": 1.142384, "p99": 1.442021, "max": 1.725128},
+    "observation_lookup": {"p50": 0.001000, "p90": 0.001110, "p99": 0.001170, "max": 0.001200},
+    "observation_validation": {"p50": 0.005830, "p90": 0.006201, "p99": 0.006750, "max": 0.007210},
+    "cpp_request_encode": {"p50": 0.105743, "p90": 0.108502, "p99": 0.129793, "max": 0.139103},
+    "cpp_request_write": {"p50": 0.139843, "p90": 0.144543, "p99": 0.180854, "max": 0.222964},
+    "response_wait": {"p50": 148.992360, "p90": 152.014005, "p99": 153.266001, "max": 153.914576},
+    "cpp_response_decode": {"p50": 0.142003, "p90": 0.143913, "p99": 0.189124, "max": 0.207835},
+    "python_request_decode": {"p50": 0.097532, "p90": 0.115953, "p99": 0.189804, "max": 0.284696},
+    "python_observation_conversion": {"p50": 0.374738, "p90": 0.396868, "p99": 0.496411, "max": 0.622114},
+    "python_response_encode": {"p50": 0.026491, "p90": 0.027460, "p99": 0.030751, "max": 0.037741}
+  },
+  "p50_share_percent": {"model": 99.246798, "cerebellum": 0.753202}
+}

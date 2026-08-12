@@ -24,7 +24,7 @@ extern char** environ;
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 3;
+constexpr std::uint16_t kProtocolVersion = 4;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBHI";
 constexpr std::string_view kRequestMagic = "CBRQ";
@@ -194,12 +194,15 @@ PythonChunkGenerator::~PythonChunkGenerator() { stop_child(); }
 
 bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out) noexcept {
     try {
+        last_timing_ = BridgeTiming{};
+        const TimePoint total_started = now();
         if (!healthy()) {
             last_error_ = "Python worker is not running";
             return false;
         }
 
         const std::shared_ptr<const ObservationSnapshot> observation = observations_.latest();
+        const TimePoint lookup_finished = now();
         if (!observation) {
             last_error_ = "no observation is available";
             return false;
@@ -217,6 +220,7 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
             last_error_ = "observation metadata exceeds protocol limits";
             return false;
         }
+        const TimePoint validation_finished = now();
 
         const std::uint64_t request_id = next_request_id_++;
         std::string payload;
@@ -253,10 +257,13 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
             payload.append(image.feature_name);
             payload.append(reinterpret_cast<const char*>(image.pixels.data()), image.pixels.size());
         }
+        const TimePoint encode_finished = now();
         if (!write_frame(payload.data(), payload.size())) return false;
+        const TimePoint write_finished = now();
 
         std::string response;
         if (!read_frame(response)) return false;
+        const TimePoint response_received = now();
         Reader reader(response);
         if (reader.bytes(4) != kResponseMagic) throw std::runtime_error("bad response magic");
         if (reader.u16() != kProtocolVersion) throw std::runtime_error("protocol version mismatch");
@@ -269,6 +276,10 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         const std::uint32_t count = reader.u32();
         const std::uint16_t model_dim = reader.u16();
         const std::uint16_t robot_dim = reader.u16();
+        const std::uint64_t python_request_decode_ns = reader.u64();
+        const std::uint64_t python_observation_ns = reader.u64();
+        const std::uint64_t python_model_ns = reader.u64();
+        const std::uint64_t python_response_encode_ns = reader.u64();
         const std::uint32_t error_size = reader.u32();
 
         if (received_id != request_id) throw std::runtime_error("response request ID mismatch");
@@ -304,6 +315,24 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         out.count = static_cast<int>(count);
         out.stamps.obs_seq = observation_sequence;
         out.stamps.t_obs_capture = TimePoint{Nanos{capture_ns}};
+        const TimePoint decode_finished = now();
+        const auto elapsed = [](TimePoint begin, TimePoint end) {
+            return std::chrono::duration_cast<Nanos>(end - begin).count();
+        };
+        last_timing_ = BridgeTiming{
+            request_id,
+            elapsed(total_started, decode_finished),
+            elapsed(total_started, lookup_finished),
+            elapsed(lookup_finished, validation_finished),
+            elapsed(validation_finished, encode_finished),
+            elapsed(encode_finished, write_finished),
+            elapsed(write_finished, response_received),
+            elapsed(response_received, decode_finished),
+            static_cast<std::int64_t>(python_request_decode_ns),
+            static_cast<std::int64_t>(python_observation_ns),
+            static_cast<std::int64_t>(python_model_ns),
+            static_cast<std::int64_t>(python_response_encode_ns),
+        };
         last_error_.clear();
         return true;
     } catch (const std::exception& exc) {
@@ -488,7 +517,6 @@ void PythonChunkGenerator::transport_error(std::string message) noexcept {
 
 void PythonChunkGenerator::stop_child() noexcept {
     if (socket_ >= 0) {
-        ::shutdown(socket_, SHUT_RDWR);
         ::close(socket_);
         socket_ = -1;
     }

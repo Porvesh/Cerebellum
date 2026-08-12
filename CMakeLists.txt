@@ -17,6 +17,13 @@ find_package(Threads REQUIRED)
 add_library(cerebellum_python_bridge STATIC src/python_chunk_generator.cpp)
 target_link_libraries(cerebellum_python_bridge PUBLIC cerebellum_core Threads::Threads)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(bench_bridge bench/bridge_benchmark.cpp)
+target_link_libraries(bench_bridge PRIVATE cerebellum_python_bridge)
+target_compile_definitions(bench_bridge PRIVATE
+    CEREBELLUM_BENCH_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_BENCH_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+
 # --- tests ---
 # One dependency-free test per component, each returning its failure count.
 enable_testing()
@@ -47,7 +54,6 @@ add_executable(test_observation tests/test_observation.cpp)
 target_link_libraries(test_observation PRIVATE cerebellum_core)
 add_test(NAME observation COMMAND test_observation)
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_executable(test_python_chunk_generator tests/test_python_chunk_generator.cpp)
 target_link_libraries(test_python_chunk_generator PRIVATE cerebellum_python_bridge)
 target_compile_definitions(test_python_chunk_generator PRIVATE

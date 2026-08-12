@@ -72,6 +72,13 @@ void test_round_trip_preserves_both_action_spaces() {
     CHECK(first.count == config.chunk_size);
     CHECK(first.stamps.obs_seq == 7);
     CHECK(first.stamps.t_obs_capture <= now());
+    CHECK(generator.last_timing().request_id == 1);
+    CHECK(generator.last_timing().total_ns > 0);
+    CHECK(generator.last_timing().python_request_decode_ns > 0);
+    CHECK(generator.last_timing().python_observation_ns > 0);
+    CHECK(generator.last_timing().python_model_ns > 0);
+    CHECK(generator.last_timing().python_response_encode_ns > 0);
+    CHECK(generator.last_timing().cerebellum_overhead_ns() >= 0);
 
     bool padded_tail_has_model_data = false;
     for (int i = 0; i < first.count; ++i) {
