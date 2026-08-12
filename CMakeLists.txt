@@ -24,6 +24,12 @@ target_compile_definitions(bench_bridge PRIVATE
     CEREBELLUM_BENCH_PYTHON="${Python3_EXECUTABLE}"
     CEREBELLUM_BENCH_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
 
+add_executable(bench_runtime bench/runtime_benchmark.cpp)
+target_link_libraries(bench_runtime PRIVATE cerebellum_python_bridge)
+target_compile_definitions(bench_runtime PRIVATE
+    CEREBELLUM_BENCH_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_BENCH_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+
 # --- tests ---
 # One dependency-free test per component, each returning its failure count.
 enable_testing()

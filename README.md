@@ -119,6 +119,25 @@ overhead is computed per request as `total - model`; `response_wait` intentional
 the Python stages and therefore must not be added to them again. Observation-capture-to-action
 staleness remains a separate control-loop metric.
 
+Benchmark the complete 30 Hz inference-worker → chunk-queue → action-sink runtime using
+Discard stitching:
+
+```bash
+# Model-delay simulation using the measured 149 ms H100 latency
+./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
+  --ticks 300 --refresh-trigger 6
+
+# Real SmolVLA runtime
+CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
+  ./build/bench_runtime --runner smolvla --device cuda --warmup-inferences 10 \
+  --ticks 300 --refresh-trigger 6 \
+  --output results/runtime_discard_smolvla_h100_baseline.json
+```
+
+This report covers all action emissions, including fallbacks, and separately reports action
+lateness, observation-to-action staleness, chunk-ready-to-action queue age, underruns, skipped
+steps, discarded actions, seam size, and inference/queue counters.
+
 Run the dependency-light contract tests:
 
 ```bash

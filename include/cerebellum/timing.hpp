@@ -320,6 +320,9 @@ struct ActionRecord {
     std::int64_t staleness_ns() const noexcept {
         return (t_emit - chunk.t_obs_capture).count();
     }
+    std::int64_t ready_to_emit_ns() const noexcept {
+        return (t_emit - chunk.t_infer_end).count();
+    }
     double staleness_ms() const noexcept { return to_ms(staleness_ns()); }
     bool within_staleness_bound() const noexcept {
         return staleness_ms() <= kMaxStalenessMs;
@@ -335,19 +338,22 @@ struct ActionRecord {
 struct ControlMetrics {
     PercentileRecorder lateness;   // now - deadline, signed (§9)
     PercentileRecorder staleness;  // t_emit - t_obs_capture (invariant #4)
+    PercentileRecorder ready_to_emit;  // chunk ready to action popped from queue
 
     std::uint64_t ticks = 0;
     std::uint64_t underruns = 0;             // invariant #2
     std::uint64_t staleness_violations = 0;  // invariant #4
 
     explicit ControlMetrics(std::size_t capacity, std::size_t warmup = 0)
-        : lateness(capacity, warmup), staleness(capacity, warmup) {}
+        : lateness(capacity, warmup), staleness(capacity, warmup),
+          ready_to_emit(capacity, warmup) {}
 
     // One call per tick from the control thread. Allocation-free.
     void on_emit(const ActionRecord& rec) noexcept {
         ++ticks;
         lateness.record(rec.lateness_ns());
         staleness.record(rec.staleness_ns());
+        ready_to_emit.record(rec.ready_to_emit_ns());
         if (!rec.within_staleness_bound()) ++staleness_violations;
     }
 

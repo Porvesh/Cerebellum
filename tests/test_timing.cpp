@@ -243,10 +243,12 @@ static void test_staleness_accumulates_across_a_chunk() {
     CHECK(a0.within_staleness_bound());
     CHECK(a0.lateness_ns() == 0);
     CHECK(a0.chunk.obs_to_ready_ns() == budget_ns);
+    CHECK(a0.ready_to_emit_ns() == 0);
 
     const ActionRecord a1 = synth_action(capture, sched, 1, 1, kBudgetTargetMs);
     CHECK(a1.staleness_ms() > 179.0 && a1.staleness_ms() < 179.4);
     CHECK(a1.within_staleness_bound());
+    CHECK(a1.ready_to_emit_ns() == kControlPeriod.count());
 
     // The third action of the chunk is already past the bound, and validate.hpp
     // says exactly two fit. Two independent statements of §15.1 that must agree.
@@ -276,6 +278,7 @@ static void test_control_metrics_count_the_invariants() {
     // was no action to be late or stale. Three emits, three samples.
     CHECK(m.lateness.size() == 3);
     CHECK(m.staleness.size() == 3);
+    CHECK(m.ready_to_emit.size() == 3);
     CHECK(m.lateness.percentile(99.0) == 0);   // all emitted exactly on time
 }
 

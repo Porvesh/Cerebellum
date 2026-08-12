@@ -516,11 +516,16 @@ void PythonChunkGenerator::transport_error(std::string message) noexcept {
 }
 
 void PythonChunkGenerator::stop_child() noexcept {
-    if (socket_ >= 0) {
-        ::close(socket_);
-        socket_ = -1;
+    const int socket = socket_;
+    socket_ = -1;
+    // Half-close only the request direction first. The worker sees EOF and can
+    // exit normally while its stdout half remains connected for Python's final
+    // flush; closing both directions here produces a harmless BrokenPipeError.
+    if (socket >= 0) (void)::shutdown(socket, SHUT_WR);
+    if (child_pid_ < 0) {
+        if (socket >= 0) ::close(socket);
+        return;
     }
-    if (child_pid_ < 0) return;
 
     const pid_t pid = static_cast<pid_t>(child_pid_);
     int status = 0;
@@ -528,6 +533,7 @@ void PythonChunkGenerator::stop_child() noexcept {
         const pid_t result = ::waitpid(pid, &status, WNOHANG);
         if (result == pid || (result < 0 && errno == ECHILD)) {
             child_pid_ = -1;
+            if (socket >= 0) ::close(socket);
             return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -536,6 +542,7 @@ void PythonChunkGenerator::stop_child() noexcept {
     while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
     }
     child_pid_ = -1;
+    if (socket >= 0) ::close(socket);
 }
 
 }  // namespace cerebellum
