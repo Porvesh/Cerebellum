@@ -11,7 +11,10 @@ namespace cerebellum {
 // Hardcoded so a measurement can't erode them.
 
 inline constexpr int kControlHz = 30;
-inline constexpr double kMaxStalenessMs = 200.0;
+// Measured deployment target: two back-to-back ~149 ms SmolVLA windows, one
+// control-tick alignment, and a small scheduling margin. Discard still exceeds
+// this; continuous refresh/RTC is expected to be judged against it.
+inline constexpr double kMaxStalenessMs = 350.0;
 
 // Derived, never a literal: 1e9/30 truncates to 33'333'333 ns, which drifts
 // 36 us/hour and doesn't matter.

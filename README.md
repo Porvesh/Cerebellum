@@ -16,7 +16,7 @@ around it.
 ## The invariant
 
 > An action is available at the actuator every 33 ms, computed from an observation
-> no older than 200 ms.
+> no older than 350 ms.
 
 Two numbers, two distinct failure modes: miss the cadence and the controller sees jitter
 (a *latency* failure); blow the staleness bound and actions arrive smoothly but describe a

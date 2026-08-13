@@ -46,18 +46,18 @@ prefilled the queue, so startup behavior is included.
 
 | Runtime metric | Synthetic 149 ms | SmolVLA/H100 |
 |---|---:|---:|
-| Action-emission lateness p50 | ~0.10 ms | ~0.08 ms |
-| Action-emission lateness p99 | ~0.11 ms | ~0.10 ms |
+| Action-emission lateness p50 | ~0.08 ms | ~0.08 ms |
+| Action-emission lateness p99 | ~0.10 ms | ~0.11 ms |
 | Skipped control steps | 0 | 0 |
 | Fallbacks / underruns | 4 / 300 | 4 / 300 |
-| Staleness p50 | 866.53 ms | 866.49 ms |
-| Staleness p99 | 1599.99 ms | 1599.90 ms |
-| Staleness violations | 283 / 296 | 283 / 296 |
+| Staleness p50 | 866.53 ms | 866.59 ms |
+| Staleness p99 | 1599.97 ms | 1599.95 ms |
+| Staleness violations (350 ms bound) | 254 / 296 | 254 / 296 |
 | Actions discarded at seams | 28 | 28 |
 
 The refresh trigger successfully hides approximately 149 ms of inference after
 startup: there are no later underruns or skipped periods. It does **not** satisfy
-the 200 ms staleness contract. Discard continues executing most of each
+the measured 350 ms staleness contract. Discard continues executing most of each
 50-action chunk, so queue age—not Cerebellum bridge overhead—dominates
 observation-to-action staleness.
 

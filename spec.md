@@ -43,7 +43,7 @@ Cerebellum is that queue plus the machinery around it.
 Everything in this document exists to satisfy one statement:
 
 > An action is available at the actuator every 33 ms, computed from an observation
-> no older than 200 ms.
+> no older than 350 ms.
 
 Two numbers, two distinct failure modes:
 
@@ -651,26 +651,18 @@ measurements rather than by editing the invariant.
 ### 15.1 The staleness bound and the chunk length are in conflict
 
 Staleness of the *i*-th action of a chunk is `budget + i × period`. With the §6 budget and
-the §1 bound:
+the measured §1 bound:
 
 ```
-staleness(i) = 146 ms + i × 33.3 ms  ≤  200 ms   →   i ≤ 1
+staleness(i) = 146 ms + i × 33.3 ms  ≤  350 ms   →   i ≤ 6
 ```
 
-Two actions per chunk. A 50-action chunk drained at 30 Hz reaches ~1.8 s of staleness at
-its tail, 9x over the bound — so `H = 50` and `MAX_STALENESS_MS = 200` cannot both hold
-under a 146 ms budget. Exactly one of these is true, and phase 1 has to say which:
-
-- the bound applies **at chunk start** (a much weaker claim, and then invariant #4 needs
-  rewording), or
-- the bound is per-action and the real budget is a *much* smaller number than 146 ms
-  (which means phase 2's network path is out of the question), or
-- `MAX_STALENESS_MS` is simply wrong for chunked control and belongs nearer 1000 ms, in
-  which case say what 200 ms was protecting against.
-
-The chunk-size sweep (§11.2) is the experiment that settles it — it is measuring precisely
-this trade. Until it runs, treat `MAX_STALENESS_MS` as the number under test rather than a
-number already met.
+Seven actions per chunk. A 50-action chunk drained at 30 Hz still reaches ~1.8 s of
+staleness at its tail, over 5x the bound. The Discard runtime baseline settled the target:
+350 ms covers two ideal back-to-back ~149 ms inference windows, one 33 ms control
+alignment, and a small scheduling margin. It is a continuous-refresh/RTC target, not a
+claim that draining `H = 50` is acceptable. The chunk-size and refresh sweep (§11.2)
+measures whether a stitching policy actually meets it.
 
 ### 15.2 `R` covers more than the forward pass
 

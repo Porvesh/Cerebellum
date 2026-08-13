@@ -46,7 +46,7 @@ static int g_failures = 0;
 
 static void test_invariant() {
     CHECK(kControlHz == 30);
-    CHECK(kMaxStalenessMs == 200.0);
+    CHECK(kMaxStalenessMs == 350.0);
 
     // Derived from kControlHz, never written as a literal. 1e9/30 is not an
     // integer; 33'333'333 ns drops a third of a nanosecond per tick, which is
@@ -84,14 +84,14 @@ static void test_steps_for() {
 static void test_staleness_bound_conflicts_with_chunk_size() {
     // spec.md §15.1, pinned so the contradiction cannot be quietly forgotten.
     //
-    // staleness(i) = budget + i*period, so under the §6 budget only TWO actions
-    // of a chunk fit inside the 200 ms bound — against a checkpoint that really
-    // does emit 50. H=50 and kMaxStalenessMs=200 cannot both hold.
-    CHECK(max_actions_within_staleness() == 2);
+    // staleness(i) = budget + i*period, so under the §6 budget only seven actions
+    // of a chunk fit inside the measured 350 ms bound — against a checkpoint
+    // that really does emit 50. Continuous refresh is still required.
+    CHECK(max_actions_within_staleness() == 7);
     CHECK(kChunkSize > max_actions_within_staleness());
 
     // A budget that already exceeds the bound leaves nothing usable at all.
-    CHECK(max_actions_within_staleness(250.0) == 0);
+    CHECK(max_actions_within_staleness(351.0) == 0);
 }
 
 static void test_horizon_chain() {

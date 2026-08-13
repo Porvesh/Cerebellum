@@ -187,6 +187,7 @@ void report(std::ostream& out, const Arguments& args, RuntimeLoop& loop,
         << "  \"device\": \"" << args.device << "\",\n"
         << "  \"ticks_requested\": " << args.ticks << ",\n"
         << "  \"control_hz\": " << kControlHz << ",\n"
+        << "  \"staleness_bound_ms\": " << kMaxStalenessMs << ",\n"
         << "  \"chunk_size\": " << kChunkSize << ",\n"
         << "  \"refresh_trigger\": " << args.refresh_trigger << ",\n"
         << "  \"warmup_inferences\": ";

@@ -10,8 +10,8 @@
 namespace cerebellum {
 
 // Actions of a chunk inside the staleness bound, where
-// staleness(i) = budget + i * period. Returns 2 under the §6 budget against a
-// checkpoint that emits 50 — H=50 and kMaxStalenessMs=200 can't both hold (§15.1).
+// staleness(i) = budget + i * period. Returns 7 under the §6 budget against a
+// checkpoint that emits 50 — continuous refresh is required to hold the bound (§15.1).
 inline constexpr int max_actions_within_staleness(double budget_ms = kBudgetTargetMs) {
     if (budget_ms > kMaxStalenessMs) return 0;
     return static_cast<int>((kMaxStalenessMs - budget_ms) / kControlPeriodMs) + 1;

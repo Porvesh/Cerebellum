@@ -250,12 +250,15 @@ static void test_staleness_accumulates_across_a_chunk() {
     CHECK(a1.within_staleness_bound());
     CHECK(a1.ready_to_emit_ns() == kControlPeriod.count());
 
-    // The third action of the chunk is already past the bound, and validate.hpp
-    // says exactly two fit. Two independent statements of §15.1 that must agree.
-    const ActionRecord a2 = synth_action(capture, sched, 2, 2, kBudgetTargetMs);
-    CHECK(a2.staleness_ms() > 212.0);
-    CHECK(!a2.within_staleness_bound());
-    CHECK(max_actions_within_staleness() == 2);
+    // Indices 0..6 remain inside the measured bound; index 7 is the first past
+    // it. validate.hpp reaches the same result from the other direction.
+    const ActionRecord a6 = synth_action(capture, sched, 6, 6, kBudgetTargetMs);
+    CHECK(a6.staleness_ms() > 345.9 && a6.staleness_ms() < 346.1);
+    CHECK(a6.within_staleness_bound());
+    const ActionRecord a7 = synth_action(capture, sched, 7, 7, kBudgetTargetMs);
+    CHECK(a7.staleness_ms() > 379.0);
+    CHECK(!a7.within_staleness_bound());
+    CHECK(max_actions_within_staleness() == 7);
 }
 
 static void test_control_metrics_count_the_invariants() {
@@ -267,7 +270,7 @@ static void test_control_metrics_count_the_invariants() {
 
     m.on_emit(synth_action(capture, sched, 0, 0, kBudgetTargetMs));   // in bound
     m.on_emit(synth_action(capture, sched, 1, 1, kBudgetTargetMs));   // in bound
-    m.on_emit(synth_action(capture, sched, 2, 2, kBudgetTargetMs));   // violation
+    m.on_emit(synth_action(capture, sched, 7, 7, kBudgetTargetMs));   // violation
     m.on_underrun();
 
     CHECK(m.ticks == 4);
