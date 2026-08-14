@@ -125,18 +125,24 @@ Discard stitching:
 ```bash
 # Model-delay simulation using the measured 149 ms H100 latency
 ./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
-  --ticks 300 --refresh-trigger 6
+  --ticks 300 --refresh-trigger 6 --refresh-policy tail
+
+# Freshness/power comparison: continuously generate replacement chunks
+./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
+  --ticks 300 --refresh-trigger 6 --refresh-policy continuous
 
 # Real SmolVLA runtime
 CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
   ./build/bench_runtime --runner smolvla --device cuda --warmup-inferences 10 \
-  --ticks 300 --refresh-trigger 6 \
+  --ticks 300 --refresh-trigger 6 --refresh-policy tail \
   --output results/runtime_discard_smolvla_h100_baseline.json
 ```
 
 This report covers all action emissions, including fallbacks, and separately reports action
 lateness, observation-to-action staleness, chunk-ready-to-action queue age, underruns, skipped
 steps, discarded actions, seam size, and inference/queue counters.
+`inference_load.worker_busy_percent` is the fraction of runtime spent inside
+`ChunkGenerator::generate()`; it is a comparable workload proxy, not measured GPU wattage.
 
 Run the dependency-light contract tests:
 

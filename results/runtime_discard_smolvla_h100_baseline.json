@@ -1,6 +1,7 @@
 {
   "runner": "smolvla",
   "stitching": "discard",
+  "refresh_policy": "tail",
   "device": "cuda",
   "ticks_requested": 300,
   "control_hz": 30,
@@ -9,23 +10,23 @@
   "refresh_trigger": 6,
   "warmup_inferences": 10,
   "synthetic_inference_ms": null,
-  "wall_time_ms": 10000.367742,
+  "wall_time_ms": 10000.393362,
   "timing_ms": {
-    "action_emit_lateness": {"min": 0.064133, "p50": 0.080868, "p90": 0.104746, "p99": 0.107469, "max": 0.175620},
-    "observation_to_action_staleness": {"min": 166.552774, "p50": 866.585474, "p90": 1466.558518, "p99": 1599.947590, "max": 1599.993850},
-    "chunk_ready_to_action_emit": {"min": 7.968568, "p50": 707.967968, "p90": 1307.941891, "p99": 1446.481316, "max": 1449.760072}
+    "action_emit_lateness": {"min": 0.063715, "p50": 0.097683, "p90": 0.103225, "p99": 0.106948, "max": 0.109862},
+    "observation_to_action_staleness": {"min": 166.539630, "p50": 933.188403, "p90": 1500.051788, "p99": 1666.600108, "max": 1666.690950},
+    "chunk_ready_to_action_emit": {"min": 12.765198, "p50": 690.633235, "p90": 1290.607354, "p99": 1446.093463, "max": 1512.760095}
   },
   "action_metrics": {
-    "discard_seam_linf": {"min": 0.526385, "p50": 0.526385, "p90": 0.526385, "p99": 0.526385, "max": 0.526385}
+    "discard_seam_linf": {"min": 0.526385, "p50": 0.602088, "p90": 0.602088, "p99": 0.602088, "max": 0.602088}
   },
   "counts": {
     "ticks": 300,
     "strict_deadline_misses": 300,
-    "real_actions": 296,
-    "fallback_actions": 4,
-    "underruns": 4,
-    "staleness_violations": 254,
-    "steps_skipped": 0,
+    "real_actions": 288,
+    "fallback_actions": 12,
+    "underruns": 12,
+    "staleness_violations": 264,
+    "steps_skipped": 5,
     "inference_requests": 7,
     "chunks_generated": 7,
     "generation_failures": 0,
@@ -36,10 +37,15 @@
     "acquire_failures": 0,
     "chunks_accepted": 7,
     "chunks_superseded": 0,
-    "actions_discarded": 28
+    "actions_discarded": 46
+  },
+  "inference_load": {
+    "generation_wall_ms": 1603.194779,
+    "generated_per_second": 0.699972,
+    "worker_busy_percent": 16.031317
   },
   "rates_percent": {
-    "underrun": 1.333333,
-    "staleness_violation_of_real_actions": 85.810811
+    "underrun": 4.000000,
+    "staleness_violation_of_real_actions": 91.666667
   }
 }

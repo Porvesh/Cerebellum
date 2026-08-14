@@ -62,6 +62,7 @@ struct InferenceStats {
     std::uint64_t generation_failed = 0;
     std::uint64_t invalid_chunks = 0;
     std::uint64_t publish_retries = 0;
+    std::uint64_t generation_wall_ns = 0;
 };
 
 class RuntimeLoop {
@@ -221,12 +222,17 @@ private:
             ++inference_stats_.requests;
 
             if (!generator_.generate(request, *slot)) {
+                const TimePoint infer_end = now();
+                inference_stats_.generation_wall_ns += static_cast<std::uint64_t>(
+                    (infer_end - slot->stamps.t_infer_start).count());
                 ++inference_stats_.generation_failed;
                 std::this_thread::sleep_for(worker_poll_period_);
                 continue;  // retain this producer-owned slot and retry it
             }
 
             slot->stamps.t_infer_end = now();
+            inference_stats_.generation_wall_ns += static_cast<std::uint64_t>(
+                (slot->stamps.t_infer_end - slot->stamps.t_infer_start).count());
             slot->first_step = request.first_step;  // backend cannot retarget it
             if (slot->count <= 0 || slot->count > cfg_.chunk_size) {
                 ++inference_stats_.invalid_chunks;

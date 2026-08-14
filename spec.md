@@ -211,6 +211,16 @@ This is why the measurement work comes before the tuning work. You cannot pick `
 without a trustworthy p99. (See §15.2 — in phase 2 the term to cover is the whole
 observation→chunk-ready path, not the forward pass alone.)
 
+The runtime exposes two refresh policies over the same queue:
+
+- **Tail** applies the `R` rule above and conserves inference work by draining most of
+  each chunk.
+- **Continuous** starts the next request as soon as the previous result is accepted. It
+  minimizes observation age at the cost of high model duty cycle and discarded actions.
+
+This is separate from stitching: Continuous+Discard measures the freshness and compute
+cost before RTC is allowed to improve the seam.
+
 ### 4.5 Real-time chunking, written from the paper
 
 Discard and ensembling both operate on a chunk that already exists. Real-time chunking

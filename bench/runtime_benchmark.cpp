@@ -28,6 +28,7 @@ struct Arguments {
     int warmup_inferences = 2;
     int refresh_trigger = 6;
     double synthetic_inference_ms = 149.0;
+    RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     bool local_files_only = true;
 };
 
@@ -54,6 +55,11 @@ Arguments parse_arguments(int argc, char** argv) {
             args.warmup_inferences = std::stoi(std::string(value(arg)));
         } else if (arg == "--refresh-trigger") {
             args.refresh_trigger = std::stoi(std::string(value(arg)));
+        } else if (arg == "--refresh-policy") {
+            const std::string_view name = value(arg);
+            if (name == "tail") args.refresh_policy = RefreshPolicy::Tail;
+            else if (name == "continuous") args.refresh_policy = RefreshPolicy::Continuous;
+            else throw std::invalid_argument("--refresh-policy must be tail or continuous");
         } else if (arg == "--inference-ms") {
             args.synthetic_inference_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--output") {
@@ -178,12 +184,16 @@ void report(std::ostream& out, const Arguments& args, RuntimeLoop& loop,
     const ProducerStats& producer = loop.queue().producer_stats();
     const ConsumerStats& consumer = loop.queue().consumer_stats();
     const std::uint64_t real_actions = sink.emissions - sink.fallbacks;
+    const double wall_ns = static_cast<double>(wall_time.count());
+    const double wall_seconds = wall_ns / 1e9;
 
     out << std::fixed << std::setprecision(6)
         << "{\n"
         << "  \"runner\": \""
         << (args.runner == PythonRunner::Synthetic ? "synthetic" : "smolvla") << "\",\n"
         << "  \"stitching\": \"discard\",\n"
+        << "  \"refresh_policy\": \""
+        << (args.refresh_policy == RefreshPolicy::Tail ? "tail" : "continuous") << "\",\n"
         << "  \"device\": \"" << args.device << "\",\n"
         << "  \"ticks_requested\": " << args.ticks << ",\n"
         << "  \"control_hz\": " << kControlHz << ",\n"
@@ -228,6 +238,13 @@ void report(std::ostream& out, const Arguments& args, RuntimeLoop& loop,
         << "    \"chunks_superseded\": " << consumer.chunks_superseded << ",\n"
         << "    \"actions_discarded\": " << consumer.actions_discarded << "\n"
         << "  },\n"
+        << "  \"inference_load\": {\n"
+        << "    \"generation_wall_ms\": " << inference.generation_wall_ns / 1e6 << ",\n"
+        << "    \"generated_per_second\": "
+        << (wall_seconds > 0.0 ? inference.generated / wall_seconds : 0.0) << ",\n"
+        << "    \"worker_busy_percent\": "
+        << (wall_ns > 0.0 ? 100.0 * inference.generation_wall_ns / wall_ns : 0.0) << "\n"
+        << "  },\n"
         << "  \"rates_percent\": {\n"
         << "    \"underrun\": "
         << (metrics.ticks ? 100.0 * metrics.underruns / metrics.ticks : 0.0) << ",\n"
@@ -243,6 +260,7 @@ int main(int argc, char** argv) {
         const Arguments args = parse_arguments(argc, argv);
         RuntimeConfig config;
         config.stitching = Stitching::Discard;
+        config.refresh_policy = args.refresh_policy;
         config.refresh_trigger = args.refresh_trigger;
         config.queue_capacity = config.chunk_size + config.refresh_trigger;
         config.validate();

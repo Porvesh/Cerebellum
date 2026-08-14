@@ -54,6 +54,9 @@ static void test_invariant() {
     // discovered.
     CHECK(kControlPeriod == std::chrono::nanoseconds{1'000'000'000 / kControlHz});
     CHECK(kControlPeriod.count() == 33'333'333);
+
+    RuntimeConfig cfg;
+    CHECK(cfg.refresh_policy == RefreshPolicy::Tail);
 }
 
 // --- facts read out of the checkpoint ---------------------------------------

@@ -137,6 +137,22 @@ static void test_refresh_trigger() {
     CHECK(!q.should_refresh());
 }
 
+static void test_continuous_refresh_starts_after_each_accept() {
+    RuntimeConfig cfg = cfg_with(Stitching::Discard);
+    cfg.refresh_policy = RefreshPolicy::Continuous;
+    ActionChunkQueue q(cfg);
+    ScheduleClock sched(now());
+    Action a{};
+    ActionRecord rec;
+
+    CHECK(q.should_refresh());
+    CHECK(q.publish(fill(q, 0, kChunkSize, 1.0f)));
+    CHECK(!q.should_refresh());  // one completed chunk is waiting for control
+    CHECK(q.pop(0, sched.deadline(0), a, rec));
+    CHECK(q.remaining() == kChunkSize - 1);
+    CHECK(q.should_refresh());   // do not wait for the tail trigger
+}
+
 // --- §4.3, discard ----------------------------------------------------------
 
 static void test_discard_skips_the_stale_prefix() {
@@ -326,6 +342,7 @@ int main() {
     test_publish_then_drain();
     test_underrun_on_empty_queue();
     test_refresh_trigger();
+    test_continuous_refresh_starts_after_each_accept();
     test_discard_skips_the_stale_prefix();
     test_ensemble_blends_the_overlap();
     test_ensemble_releases_the_old_chunk();

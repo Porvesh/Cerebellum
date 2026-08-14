@@ -93,6 +93,7 @@ public:
     explicit ActionChunkQueue(const RuntimeConfig& cfg, std::size_t seam_capacity = 4096)
         : chunk_size_(cfg.chunk_size), action_dim_(cfg.action_dim),
           refresh_trigger_(cfg.refresh_trigger), stitching_(cfg.stitching),
+          refresh_policy_(cfg.refresh_policy),
           pool_(kChunkSlots), ready_(kChunkSlots), free_(kChunkSlots),
           seam_(seam_capacity) {
         if (cfg.chunk_size > kChunkSize) {
@@ -139,7 +140,9 @@ public:
     // §4.4's trigger. The ready check is what stops one slow accept from firing a
     // second inference for a chunk that is already computed and waiting.
     bool should_refresh() const {
-        return ready_.empty() && remaining() <= refresh_trigger_;
+        if (!ready_.empty()) return false;
+        return refresh_policy_ == RefreshPolicy::Continuous ||
+               remaining() <= refresh_trigger_;
     }
 
     // Actions the consumer can still emit without a new chunk. Written by the
@@ -326,6 +329,7 @@ private:
     const int action_dim_;
     const int refresh_trigger_;
     const Stitching stitching_;
+    const RefreshPolicy refresh_policy_;
 
     std::vector<Chunk> pool_;
     detail::SpscQueue<std::uint32_t> ready_;  // producer -> consumer

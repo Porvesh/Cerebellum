@@ -120,6 +120,7 @@ void test_two_loops_run_concurrently() {
     CHECK(sink.emissions.size() == 100);
     CHECK(loop.metrics().ticks == 100);
     CHECK(loop.inference_stats().generated > 3);
+    CHECK(loop.inference_stats().generation_wall_ns > 0);
     CHECK(loop.queue().consumer_stats().chunks_accepted > 3);
     CHECK(generator.calls == loop.inference_stats().requests);
     CHECK(loop.inference_stats().invalid_chunks == 0);

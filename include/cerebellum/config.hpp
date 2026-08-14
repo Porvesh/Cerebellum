@@ -70,6 +70,11 @@ enum class UnderrunPolicy { HoldLast, Zeros, Extrapolate };
 
 enum class Stitching { Discard, Ensemble, Rtc };
 
+// Tail conserves inference work by draining most of a chunk. Continuous starts
+// the next request as soon as the previous result is accepted, trading model
+// duty cycle for fresher observations.
+enum class RefreshPolicy { Tail, Continuous };
+
 struct RtcConfig {
     int execution_horizon = 10;  // the paper's; disagrees with R by default (§15.5)
     int inference_delay = steps_for(kBudgetTargetMs);
@@ -85,6 +90,7 @@ struct RuntimeConfig {
     int queue_capacity = 64;   // >= chunk_size + refresh_trigger
 
     Stitching stitching = Stitching::Discard;
+    RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     RtcConfig rtc{};
 
     ActionSpace action_space = ActionSpace::AbsolutePosition;  // LeRobot convention

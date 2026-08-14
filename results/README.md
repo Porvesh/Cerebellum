@@ -37,29 +37,37 @@ Raw reports:
 - [`synthetic_bridge_baseline.json`](synthetic_bridge_baseline.json)
 - [`smolvla_h100_baseline.json`](smolvla_h100_baseline.json)
 
-## Discard runtime baseline
+## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action
-chunk and refresh trigger of 6. The synthetic generator slept for 149 ms; the
-real run used SmolVLA on the same H100 after ten model warmups. Neither run
-prefilled the queue, so startup behavior is included.
+chunk and refresh trigger of 6. Tail drains the chunk until the trigger;
+Continuous requests the next chunk immediately after accepting the previous one.
+Neither mode prefills the queue, so startup behavior is included.
 
-| Runtime metric | Synthetic 149 ms | SmolVLA/H100 |
-|---|---:|---:|
-| Action-emission lateness p50 | ~0.08 ms | ~0.08 ms |
-| Action-emission lateness p99 | ~0.10 ms | ~0.11 ms |
-| Skipped control steps | 0 | 0 |
-| Fallbacks / underruns | 4 / 300 | 4 / 300 |
-| Staleness p50 | 866.53 ms | 866.59 ms |
-| Staleness p99 | 1599.97 ms | 1599.95 ms |
-| Staleness violations (350 ms bound) | 254 / 296 | 254 / 296 |
-| Actions discarded at seams | 28 | 28 |
+| Runtime metric | Synthetic Tail | Synthetic Continuous | H100 Tail | H100 Continuous |
+|---|---:|---:|---:|---:|
+| Generation wall / request | 149 ms | 149 ms | ~229 ms | ~239 ms |
+| Worker busy | 10.44% | 89.48% | 16.03% | 90.63% |
+| Chunks / 10 s | 7 | 60 | 7 | 38 |
+| Staleness p50 | 866.52 ms | 233.25 ms | 933.19 ms | 366.64 ms |
+| Staleness p99 | 1599.93 ms | 300.01 ms | 1666.60 ms | 499.99 ms |
+| Violations / real actions | 254 / 296 | 0 / 296 | 264 / 288 | 180 / 293 |
+| Fallbacks / underruns | 4 | 4 | 12 | 7 |
+| Skipped control steps | 0 | 0 | 5 | 0 |
+| Actions discarded | 28 | 241 | 46 | 262 |
 
-The refresh trigger successfully hides approximately 149 ms of inference after
-startup: there are no later underruns or skipped periods. It does **not** satisfy
-the measured 350 ms staleness contract. Discard continues executing most of each
-50-action chunk, so queue age—not Cerebellum bridge overhead—dominates
-observation-to-action staleness.
+The controlled synthetic comparison isolates scheduling: Continuous satisfies
+the 350 ms bound, but increases worker duty from 10.44% to 89.48% and discards
+241 predicted actions. This is the freshness-versus-compute tradeoff RTC will
+inherit; RTC is expected to improve the frequent seams, not remove inference
+cost.
+
+The refresh-policy H100 runs were **not isolated**. External processes reserved
+about 74 GiB on every GPU (0% utilization at launch), and observed SmolVLA
+generation rose from the earlier isolated ~149 ms baseline to ~229–239 ms.
+These contention-sensitive results deliberately show why a 350 ms target only
+holds when the latency assumption holds: Continuous p99 reached ~500 ms. They
+must not be presented as clean power or model-performance measurements.
 
 `strict_deadline_misses` counts every positive offset from the exact deadline;
 normal scheduler wakeup latency therefore counts even when it is only about
@@ -69,4 +77,6 @@ strict count by itself.
 Raw runtime reports:
 
 - [`runtime_discard_synthetic_baseline.json`](runtime_discard_synthetic_baseline.json)
+- [`runtime_discard_continuous_synthetic_baseline.json`](runtime_discard_continuous_synthetic_baseline.json)
 - [`runtime_discard_smolvla_h100_baseline.json`](runtime_discard_smolvla_h100_baseline.json)
+- [`runtime_discard_continuous_smolvla_h100_baseline.json`](runtime_discard_continuous_smolvla_h100_baseline.json)
