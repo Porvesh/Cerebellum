@@ -1,51 +1,52 @@
 #include "cerebellum/python_chunk_generator.hpp"
 
 #include <arpa/inet.h>
+#include <poll.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
-#include <poll.h>
-#include <signal.h>
-#include <spawn.h>
 #include <stdexcept>
 #include <string_view>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <thread>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
-extern char** environ;
+extern char **environ;
 
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 4;
+constexpr std::uint16_t kProtocolVersion = 5;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBHI";
 constexpr std::string_view kRequestMagic = "CBRQ";
 constexpr std::string_view kResponseMagic = "CBRS";
 
-void append_u16(std::string& out, std::uint16_t value) {
+void append_u16(std::string &out, std::uint16_t value) {
     const std::uint16_t encoded = htons(value);
-    out.append(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
+    out.append(reinterpret_cast<const char *>(&encoded), sizeof(encoded));
 }
 
-void append_u32(std::string& out, std::uint32_t value) {
+void append_u32(std::string &out, std::uint32_t value) {
     const std::uint32_t encoded = htonl(value);
-    out.append(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
+    out.append(reinterpret_cast<const char *>(&encoded), sizeof(encoded));
 }
 
-void append_u64(std::string& out, std::uint64_t value) {
+void append_u64(std::string &out, std::uint64_t value) {
     append_u32(out, static_cast<std::uint32_t>(value >> 32));
     append_u32(out, static_cast<std::uint32_t>(value));
 }
 
-void append_f32(std::string& out, float value) {
+void append_f32(std::string &out, float value) {
     std::uint32_t bits = 0;
     static_assert(sizeof(bits) == sizeof(value));
     std::memcpy(&bits, &value, sizeof(bits));
@@ -53,7 +54,7 @@ void append_f32(std::string& out, float value) {
 }
 
 class Reader {
-public:
+   public:
     explicit Reader(std::string_view data) : data_(data) {}
 
     std::string_view bytes(std::size_t count) {
@@ -79,9 +80,7 @@ public:
         return ntohl(encoded);
     }
 
-    std::uint64_t u64() {
-        return (static_cast<std::uint64_t>(u32()) << 32) | u32();
-    }
+    std::uint64_t u64() { return (static_cast<std::uint64_t>(u32()) << 32) | u32(); }
 
     std::int64_t i64() { return static_cast<std::int64_t>(u64()); }
 
@@ -95,26 +94,31 @@ public:
 
     bool empty() const noexcept { return offset_ == data_.size(); }
 
-private:
+   private:
     std::string_view data_;
     std::size_t offset_ = 0;
 };
 
 std::uint8_t stitching_value(Stitching stitching) {
     switch (stitching) {
-        case Stitching::Discard: return 0;
-        case Stitching::Ensemble: return 1;
-        case Stitching::Rtc: return 2;
+        case Stitching::Discard:
+            return 0;
+        case Stitching::Ensemble:
+            return 1;
+        case Stitching::Rtc:
+            return 2;
     }
     return std::numeric_limits<std::uint8_t>::max();
 }
 
 }  // namespace
 
-PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
-                                           ObservationSource& observations,
+PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig &config,
+                                           ObservationSource &observations,
                                            PythonChunkGeneratorOptions options)
-    : config_(config), observations_(observations), options_(std::move(options)),
+    : config_(config),
+      observations_(observations),
+      options_(std::move(options)),
       io_timeout_(options_.startup_timeout) {
     config_.validate();
     if (options_.startup_timeout <= std::chrono::milliseconds::zero() ||
@@ -149,9 +153,9 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
         options_.device,
     };
     if (options_.local_files_only) arguments.emplace_back("--local-files-only");
-    std::vector<char*> argv;
+    std::vector<char *> argv;
     argv.reserve(arguments.size() + 1);
-    for (std::string& argument : arguments) argv.push_back(argument.data());
+    for (std::string &argument : arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);
 
     posix_spawn_file_actions_t actions;
@@ -168,8 +172,8 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
 
     pid_t pid = -1;
     if (spawn_error == 0) {
-        spawn_error = ::posix_spawnp(&pid, options_.python_executable.c_str(), &actions,
-                                     nullptr, argv.data(), environ);
+        spawn_error = ::posix_spawnp(&pid, options_.python_executable.c_str(), &actions, nullptr,
+                                     argv.data(), environ);
     }
     if (actions_initialized) ::posix_spawn_file_actions_destroy(&actions);
     if (spawn_error != 0) {
@@ -192,7 +196,7 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig& config,
 
 PythonChunkGenerator::~PythonChunkGenerator() { stop_child(); }
 
-bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out) noexcept {
+bool PythonChunkGenerator::generate(const InferenceRequest &request, Chunk &out) noexcept {
     try {
         last_timing_ = BridgeTiming{};
         const TimePoint total_started = now();
@@ -209,7 +213,7 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         }
         try {
             observation->validate();
-        } catch (const std::exception& exc) {
+        } catch (const std::exception &exc) {
             last_error_ = std::string("invalid observation: ") + exc.what();
             return false;
         }
@@ -223,9 +227,16 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         const TimePoint validation_finished = now();
 
         const std::uint64_t request_id = next_request_id_++;
+        if (request.rtc.prefix_count < 0 || request.rtc.prefix_count > config_.chunk_size ||
+            (request.rtc.prefix_count > 0 && request.rtc.prefix_first_step != request.first_step)) {
+            last_error_ = "invalid RTC committed prefix";
+            return false;
+        }
         std::string payload;
-        payload.reserve(66 + observation->state.size() * sizeof(float) +
-                        observation->task.size());
+        payload.reserve(98 +
+                        static_cast<std::size_t>(request.rtc.prefix_count) *
+                            config_.padded_action_dim * sizeof(float) +
+                        observation->state.size() * sizeof(float) + observation->task.size());
         payload.append(kRequestMagic);
         append_u16(payload, kProtocolVersion);
         payload.push_back(static_cast<char>(stitching_value(request.stitching)));
@@ -236,14 +247,32 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         append_u32(payload, static_cast<std::uint32_t>(request.action_count));
         append_u32(payload, options_.seed);
         append_u64(payload, observation->sequence);
-        append_u64(payload, static_cast<std::uint64_t>(std::chrono::duration_cast<Nanos>(
-                                observation->capture_time.time_since_epoch()).count()));
+        append_u64(payload,
+                   static_cast<std::uint64_t>(std::chrono::duration_cast<Nanos>(
+                                                  observation->capture_time.time_since_epoch())
+                                                  .count()));
         append_u32(payload, static_cast<std::uint32_t>(observation->state.size()));
         append_u16(payload, static_cast<std::uint16_t>(observation->images.size()));
         append_u32(payload, static_cast<std::uint32_t>(observation->task.size()));
+        append_u64(payload, request.rtc.source_chunk_id);
+        append_u64(payload, static_cast<std::uint64_t>(request.rtc.prefix_first_step));
+        append_u32(payload, static_cast<std::uint32_t>(request.rtc.prefix_count));
+        append_u32(payload, static_cast<std::uint32_t>(request.rtc.inference_delay));
+        append_u32(payload, static_cast<std::uint32_t>(request.rtc.execution_horizon));
+        append_u16(payload, request.rtc.prefix_count > 0
+                                ? static_cast<std::uint16_t>(config_.padded_action_dim)
+                                : 0);
+        append_u16(payload, 0);
+        for (int i = 0; i < request.rtc.prefix_count; ++i) {
+            for (int d = 0; d < config_.padded_action_dim; ++d) {
+                append_f32(
+                    payload,
+                    request.rtc.prefix[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)]);
+            }
+        }
         for (float value : observation->state) append_f32(payload, value);
         payload.append(observation->task);
-        for (const CameraImage& image : observation->images) {
+        for (const CameraImage &image : observation->images) {
             if (image.feature_name.size() > std::numeric_limits<std::uint16_t>::max() ||
                 image.pixels.size() > std::numeric_limits<std::uint32_t>::max()) {
                 last_error_ = "camera metadata exceeds protocol limits";
@@ -255,7 +284,8 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
             append_u16(payload, image.width);
             append_u32(payload, static_cast<std::uint32_t>(image.pixels.size()));
             payload.append(image.feature_name);
-            payload.append(reinterpret_cast<const char*>(image.pixels.data()), image.pixels.size());
+            payload.append(reinterpret_cast<const char *>(image.pixels.data()),
+                           image.pixels.size());
         }
         const TimePoint encode_finished = now();
         if (!write_frame(payload.data(), payload.size())) return false;
@@ -335,7 +365,7 @@ bool PythonChunkGenerator::generate(const InferenceRequest& request, Chunk& out)
         };
         last_error_.clear();
         return true;
-    } catch (const std::exception& exc) {
+    } catch (const std::exception &exc) {
         transport_error(exc.what());
         return false;
     } catch (...) {
@@ -383,7 +413,7 @@ bool PythonChunkGenerator::read_handshake() {
                 image.width == 0) {
                 throw std::runtime_error("Python worker sent an invalid image schema");
             }
-            for (const WorkerImageSpec& existing : schema_.images) {
+            for (const WorkerImageSpec &existing : schema_.images) {
                 if (existing.feature_name == image.feature_name) {
                     throw std::runtime_error("Python worker sent duplicate image schema names");
                 }
@@ -392,14 +422,13 @@ bool PythonChunkGenerator::read_handshake() {
         }
         if (!reader.empty()) throw std::runtime_error("invalid handshake length");
         return true;
-    } catch (const std::exception& exc) {
+    } catch (const std::exception &exc) {
         last_error_ = exc.what();
         return false;
     }
 }
 
-bool PythonChunkGenerator::observation_matches_schema(
-    const ObservationSnapshot& observation) {
+bool PythonChunkGenerator::observation_matches_schema(const ObservationSnapshot &observation) {
     if (!schema_.constrained()) return true;
     if (observation.state.size() != schema_.state_dim) {
         last_error_ = "observation state dimension does not match Python worker schema";
@@ -409,9 +438,9 @@ bool PythonChunkGenerator::observation_matches_schema(
         last_error_ = "observation image count does not match Python worker schema";
         return false;
     }
-    for (const WorkerImageSpec& expected : schema_.images) {
-        const CameraImage* found = nullptr;
-        for (const CameraImage& image : observation.images) {
+    for (const WorkerImageSpec &expected : schema_.images) {
+        const CameraImage *found = nullptr;
+        for (const CameraImage &image : observation.images) {
             if (image.feature_name == expected.feature_name) {
                 found = &image;
                 break;
@@ -427,7 +456,7 @@ bool PythonChunkGenerator::observation_matches_schema(
     return true;
 }
 
-bool PythonChunkGenerator::write_frame(const void* data, std::size_t size) {
+bool PythonChunkGenerator::write_frame(const void *data, std::size_t size) {
     if (size > kMaxFrameBytes) {
         transport_error("outgoing frame exceeds limit");
         return false;
@@ -436,7 +465,7 @@ bool PythonChunkGenerator::write_frame(const void* data, std::size_t size) {
     return write_all(&encoded_size, sizeof(encoded_size)) && write_all(data, size);
 }
 
-bool PythonChunkGenerator::read_frame(std::string& payload) {
+bool PythonChunkGenerator::read_frame(std::string &payload) {
     std::uint32_t encoded_size = 0;
     if (!read_all(&encoded_size, sizeof(encoded_size))) return false;
     const std::uint32_t size = ntohl(encoded_size);
@@ -448,8 +477,8 @@ bool PythonChunkGenerator::read_frame(std::string& payload) {
     return size == 0 || read_all(payload.data(), size);
 }
 
-bool PythonChunkGenerator::write_all(const void* data, std::size_t size) {
-    const auto* cursor = static_cast<const char*>(data);
+bool PythonChunkGenerator::write_all(const void *data, std::size_t size) {
+    const auto *cursor = static_cast<const char *>(data);
     while (size > 0) {
         if (!wait_for(POLLOUT)) return false;
         const ssize_t written = ::send(socket_, cursor, size, MSG_NOSIGNAL);
@@ -464,8 +493,8 @@ bool PythonChunkGenerator::write_all(const void* data, std::size_t size) {
     return true;
 }
 
-bool PythonChunkGenerator::read_all(void* data, std::size_t size) {
-    auto* cursor = static_cast<char*>(data);
+bool PythonChunkGenerator::read_all(void *data, std::size_t size) {
+    auto *cursor = static_cast<char *>(data);
     while (size > 0) {
         if (!wait_for(POLLIN)) return false;
         const ssize_t received = ::recv(socket_, cursor, size, 0);
@@ -495,9 +524,8 @@ bool PythonChunkGenerator::wait_for(short events) {
         return false;
     }
     if (result < 0 || (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-        transport_error(result < 0
-                            ? std::string("poll failed: ") + std::strerror(errno)
-                            : "Python worker connection failed");
+        transport_error(result < 0 ? std::string("poll failed: ") + std::strerror(errno)
+                                   : "Python worker connection failed");
         return false;
     }
     return true;
@@ -539,8 +567,7 @@ void PythonChunkGenerator::stop_child() noexcept {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     (void)::kill(pid, SIGTERM);
-    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-    }
+    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     child_pid_ = -1;
     if (socket >= 0) ::close(socket);
 }

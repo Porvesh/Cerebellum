@@ -14,39 +14,38 @@ using namespace cerebellum;
 
 static int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
             std::printf("  FAIL %s:%d  CHECK(%s)\n", __FILE__, __LINE__, #cond); \
-            ++g_failures;                                                      \
-        }                                                                      \
+            ++g_failures;                                                        \
+        }                                                                        \
     } while (0)
 
 namespace {
 
 class RecordingSink final : public ActionSink {
-public:
-    explicit RecordingSink(std::size_t capacity, Nanos delay = Nanos::zero())
-        : delay_(delay) {
+   public:
+    explicit RecordingSink(std::size_t capacity, Nanos delay = Nanos::zero()) : delay_(delay) {
         emissions.reserve(capacity);
     }
 
-    void emit(const ActionEmission& emission) noexcept override {
+    void emit(const ActionEmission &emission) noexcept override {
         emissions.push_back(emission);  // capacity is reserved before control starts
         if (delay_ > Nanos::zero()) std::this_thread::sleep_for(delay_);
     }
 
     std::vector<ActionEmission> emissions;
 
-private:
+   private:
     Nanos delay_;
 };
 
 class SyntheticGenerator final : public ChunkGenerator {
-public:
+   public:
     SyntheticGenerator(int chunk_size, Nanos delay) : chunk_size_(chunk_size), delay_(delay) {}
 
-    bool generate(const InferenceRequest& request, Chunk& out) noexcept override {
+    bool generate(const InferenceRequest &request, Chunk &out) noexcept override {
         const TimePoint capture = now();
         const std::uint64_t observation = ++calls;
         std::this_thread::sleep_for(delay_);
@@ -65,18 +64,49 @@ public:
 
     std::uint64_t calls = 0;
 
-private:
+   private:
     int chunk_size_;
     Nanos delay_;
 };
 
 class FailingGenerator final : public ChunkGenerator {
-public:
-    bool generate(const InferenceRequest&, Chunk&) noexcept override {
+   public:
+    bool generate(const InferenceRequest &, Chunk &) noexcept override {
         ++calls;
         return false;
     }
     std::uint64_t calls = 0;
+};
+
+struct SeenRtcRequest {
+    std::int64_t first_step = 0;
+    std::int64_t prefix_first_step = 0;
+    int prefix_count = 0;
+    float first_prefix_value = -1.0F;
+};
+
+class RtcRecordingGenerator final : public ChunkGenerator {
+   public:
+    bool generate(const InferenceRequest &request, Chunk &out) noexcept override {
+        seen.push_back(SeenRtcRequest{
+            request.first_step,
+            request.rtc.prefix_first_step,
+            request.rtc.prefix_count,
+            request.rtc.present() ? request.rtc.prefix[0][0] : -1.0F,
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        out.count = request.action_count;
+        out.stamps.obs_seq = seen.size();
+        out.stamps.t_obs_capture = now();
+        for (int i = 0; i < out.count; ++i) {
+            const float value = static_cast<float>(request.first_step + i);
+            out.actions[static_cast<std::size_t>(i)].fill(value);
+            out.model_actions[static_cast<std::size_t>(i)].fill(value);
+        }
+        return true;
+    }
+
+    std::vector<SeenRtcRequest> seen;
 };
 
 RuntimeConfig small_config(UnderrunPolicy policy = UnderrunPolicy::HoldLast) {
@@ -92,8 +122,8 @@ RuntimeConfig small_config(UnderrunPolicy policy = UnderrunPolicy::HoldLast) {
     return cfg;
 }
 
-void seed(RuntimeLoop& loop, int count, float first, float delta) {
-    Chunk* chunk = loop.queue().acquire();
+void seed(RuntimeLoop &loop, int count, float first, float delta) {
+    Chunk *chunk = loop.queue().acquire();
     CHECK(chunk != nullptr);
     if (!chunk) return;
     chunk->first_step = 0;
@@ -126,10 +156,30 @@ void test_two_loops_run_concurrently() {
     CHECK(loop.inference_stats().invalid_chunks == 0);
 
     std::size_t real_actions = 0;
-    for (const auto& emission : sink.emissions) {
+    for (const auto &emission : sink.emissions) {
         if (!emission.fallback) ++real_actions;
     }
     CHECK(real_actions > 50);
+}
+
+void test_rtc_retains_and_aligns_model_prefix_on_worker() {
+    RuntimeConfig cfg = small_config();
+    cfg.stitching = Stitching::Rtc;
+    cfg.refresh_policy = RefreshPolicy::Horizon;
+    cfg.validate();
+    RtcRecordingGenerator generator;
+    RecordingSink sink(80);
+    RuntimeLoop loop(cfg, generator, sink, 80, std::chrono::microseconds(50));
+
+    loop.run_for(80, std::chrono::milliseconds(1));
+
+    CHECK(generator.seen.size() >= 2);
+    if (generator.seen.size() >= 2) {
+        const SeenRtcRequest &conditioned = generator.seen[1];
+        CHECK(conditioned.prefix_count > 0);
+        CHECK(conditioned.prefix_first_step == conditioned.first_step);
+        CHECK(conditioned.first_prefix_value == static_cast<float>(conditioned.first_step));
+    }
 }
 
 std::vector<ActionEmission> run_fallback(UnderrunPolicy policy) {
@@ -173,7 +223,7 @@ void test_slow_control_skips_expired_steps() {
     CHECK(sink.emissions.size() == 5);
     CHECK(sink.emissions.back().step > 4);  // grid advanced farther than call count
     CHECK(loop.queue().consumer_stats().steps_skipped > 0);
-    for (const auto& emission : sink.emissions) {
+    for (const auto &emission : sink.emissions) {
         if (!emission.fallback) {
             CHECK(emission.action[0] == static_cast<float>(emission.step));
         }
@@ -186,9 +236,8 @@ void test_external_stop_joins_both_loops() {
     RecordingSink sink(100);
     RuntimeLoop loop(cfg, generator, sink, 100, std::chrono::microseconds(25));
 
-    std::thread control([&] {
-        loop.run_for(/*max_ticks=*/1'000'000, std::chrono::microseconds(200));
-    });
+    std::thread control(
+        [&] { loop.run_for(/*max_ticks=*/1'000'000, std::chrono::microseconds(200)); });
     while (!loop.running()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(3));
     loop.request_stop();
@@ -204,6 +253,7 @@ void test_external_stop_joins_both_loops() {
 
 int main() {
     test_two_loops_run_concurrently();
+    test_rtc_retains_and_aligns_model_prefix_on_worker();
     test_underrun_policies();
     test_slow_control_skips_expired_steps();
     test_external_stop_joins_both_loops();

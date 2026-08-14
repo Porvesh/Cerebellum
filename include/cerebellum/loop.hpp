@@ -18,15 +18,26 @@
 
 namespace cerebellum {
 
+struct RtcConditioning {
+    std::uint64_t source_chunk_id = 0;
+    std::int64_t prefix_first_step = 0;
+    int prefix_count = 0;
+    int inference_delay = 0;
+    int execution_horizon = 0;
+    std::array<ModelAction, kChunkSize> prefix{};
+
+    bool present() const noexcept { return prefix_count > 0; }
+};
+
 // Everything the inference side needs to decide which absolute steps its chunk
-// describes. The eventual Python transport adds the RTC committed-prefix
-// message beside this request; model tensors deliberately do not leak into the
-// real-time core.
+// describes. RTC carries normalized padded actions, never executable robot
+// commands: guidance happens in the model's own action space.
 struct InferenceRequest {
     std::int64_t first_step = 0;
     std::int64_t last_emitted_step = -1;
     int action_count = 0;
     Stitching stitching = Stitching::Discard;
+    RtcConditioning rtc{};
 };
 
 // Blocking is allowed here: this method runs only on the inference worker. A
@@ -35,9 +46,9 @@ struct InferenceRequest {
 // observation provenance. RuntimeLoop owns first_step,
 // chunk_id, and inference start/end stamps so every backend is measured alike.
 class ChunkGenerator {
-public:
+   public:
     virtual ~ChunkGenerator() = default;
-    virtual bool generate(const InferenceRequest& request, Chunk& out) noexcept = 0;
+    virtual bool generate(const InferenceRequest &request, Chunk &out) noexcept = 0;
 };
 
 struct ActionEmission {
@@ -50,9 +61,9 @@ struct ActionEmission {
 // Called on the control thread. Implementations must not block, allocate, or
 // wait on I/O; a later transport may enqueue to a preallocated Axon topic.
 class ActionSink {
-public:
+   public:
     virtual ~ActionSink() = default;
-    virtual void emit(const ActionEmission& emission) noexcept = 0;
+    virtual void emit(const ActionEmission &emission) noexcept = 0;
 };
 
 // Written only by the inference worker and read after run_for() joins it.
@@ -63,23 +74,28 @@ struct InferenceStats {
     std::uint64_t invalid_chunks = 0;
     std::uint64_t publish_retries = 0;
     std::uint64_t generation_wall_ns = 0;
+    std::uint64_t rtc_inference_overruns = 0;
 };
 
 class RuntimeLoop {
-public:
-    RuntimeLoop(const RuntimeConfig& cfg, ChunkGenerator& generator, ActionSink& sink,
+   public:
+    RuntimeLoop(const RuntimeConfig &cfg, ChunkGenerator &generator, ActionSink &sink,
                 std::size_t metrics_capacity = 4096,
                 Nanos worker_poll_period = std::chrono::microseconds(100))
-        : cfg_(cfg), generator_(generator), sink_(sink), queue_(cfg),
-          metrics_(metrics_capacity), worker_poll_period_(worker_poll_period) {
+        : cfg_(cfg),
+          generator_(generator),
+          sink_(sink),
+          queue_(cfg),
+          metrics_(metrics_capacity),
+          worker_poll_period_(worker_poll_period) {
         cfg_.validate();
         if (worker_poll_period_ <= Nanos::zero()) {
             throw std::invalid_argument("worker_poll_period must be positive");
         }
     }
 
-    RuntimeLoop(const RuntimeLoop&) = delete;
-    RuntimeLoop& operator=(const RuntimeLoop&) = delete;
+    RuntimeLoop(const RuntimeLoop &) = delete;
+    RuntimeLoop &operator=(const RuntimeLoop &) = delete;
 
     ~RuntimeLoop() {
         request_stop();
@@ -107,8 +123,8 @@ public:
         const ScheduleClock schedule(origin, control_period);
         std::int64_t step = 0;
 
-        for (std::size_t tick = 0;
-             tick < max_ticks && !stop_.load(std::memory_order_acquire); ++tick) {
+        for (std::size_t tick = 0; tick < max_ticks && !stop_.load(std::memory_order_acquire);
+             ++tick) {
             const TimePoint deadline = schedule.deadline(step);
             sleep_until(deadline);
             control_tick(step, deadline);
@@ -128,13 +144,13 @@ public:
     void request_stop() noexcept { stop_.store(true, std::memory_order_release); }
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-    ActionChunkQueue& queue() noexcept { return queue_; }
-    const ActionChunkQueue& queue() const noexcept { return queue_; }
-    ControlMetrics& metrics() noexcept { return metrics_; }
-    const ControlMetrics& metrics() const noexcept { return metrics_; }
-    const InferenceStats& inference_stats() const noexcept { return inference_stats_; }
+    ActionChunkQueue &queue() noexcept { return queue_; }
+    const ActionChunkQueue &queue() const noexcept { return queue_; }
+    ControlMetrics &metrics() noexcept { return metrics_; }
+    const ControlMetrics &metrics() const noexcept { return metrics_; }
+    const InferenceStats &inference_stats() const noexcept { return inference_stats_; }
 
-private:
+   private:
     void control_tick(std::int64_t step, TimePoint deadline) noexcept {
         Action action{};
         ActionRecord record{};
@@ -172,7 +188,7 @@ private:
         return Action{};
     }
 
-    void remember(const Action& action) noexcept {
+    void remember(const Action &action) noexcept {
         if (have_last_) {
             previous_output_ = last_output_;
             have_previous_ = true;
@@ -182,9 +198,11 @@ private:
     }
 
     void inference_loop() noexcept {
-        Chunk* slot = nullptr;
+        Chunk *slot = nullptr;
         bool ready_to_publish = false;
         std::uint64_t next_chunk_id = 1;
+        Chunk retained{};  // worker-private copy; never touches consumer-owned slots
+        bool have_retained = false;
 
         while (!stop_.load(std::memory_order_acquire)) {
             if (ready_to_publish) {
@@ -212,8 +230,21 @@ private:
             }
 
             const std::int64_t last_emitted = queue_.last_emitted_step();
-            const InferenceRequest request{
-                last_emitted + 1, last_emitted, cfg_.chunk_size, cfg_.stitching};
+            InferenceRequest request{last_emitted + 1, last_emitted, cfg_.chunk_size,
+                                     cfg_.stitching};
+            request.rtc.inference_delay = queue_.inference_delay();
+            request.rtc.execution_horizon = queue_.execution_horizon();
+            if (cfg_.stitching == Stitching::Rtc && have_retained &&
+                retained.covers(request.first_step)) {
+                request.rtc.source_chunk_id = retained.stamps.chunk_id;
+                request.rtc.prefix_first_step = request.first_step;
+                const int offset = static_cast<int>(request.first_step - retained.first_step);
+                request.rtc.prefix_count = std::min(retained.count - offset, cfg_.chunk_size);
+                for (int i = 0; i < request.rtc.prefix_count; ++i) {
+                    request.rtc.prefix[static_cast<std::size_t>(i)] =
+                        retained.model_actions[static_cast<std::size_t>(offset + i)];
+                }
+            }
 
             slot->first_step = request.first_step;
             slot->count = 0;
@@ -223,8 +254,8 @@ private:
 
             if (!generator_.generate(request, *slot)) {
                 const TimePoint infer_end = now();
-                inference_stats_.generation_wall_ns += static_cast<std::uint64_t>(
-                    (infer_end - slot->stamps.t_infer_start).count());
+                inference_stats_.generation_wall_ns +=
+                    static_cast<std::uint64_t>((infer_end - slot->stamps.t_infer_start).count());
                 ++inference_stats_.generation_failed;
                 std::this_thread::sleep_for(worker_poll_period_);
                 continue;  // retain this producer-owned slot and retry it
@@ -241,6 +272,18 @@ private:
             }
 
             slot->stamps.chunk_id = next_chunk_id++;
+            const auto generation_ns = std::chrono::duration_cast<Nanos>(slot->stamps.t_infer_end -
+                                                                         slot->stamps.t_infer_start)
+                                           .count();
+            const auto period_ns = kControlPeriod.count();
+            const int measured_delay =
+                static_cast<int>((generation_ns + period_ns - 1) / period_ns);
+            if (cfg_.stitching == Stitching::Rtc && measured_delay >= cfg_.chunk_size) {
+                ++inference_stats_.rtc_inference_overruns;
+            }
+            queue_.update_rtc_timing(measured_delay);
+            retained = *slot;
+            have_retained = true;
             ++inference_stats_.generated;
             ready_to_publish = true;
         }
@@ -253,8 +296,8 @@ private:
     }
 
     const RuntimeConfig cfg_;
-    ChunkGenerator& generator_;
-    ActionSink& sink_;
+    ChunkGenerator &generator_;
+    ActionSink &sink_;
     ActionChunkQueue queue_;
     ControlMetrics metrics_;
     const Nanos worker_poll_period_;

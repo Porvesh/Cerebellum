@@ -19,8 +19,7 @@ inline constexpr double kMaxStalenessMs = 350.0;
 // Derived, never a literal: 1e9/30 truncates to 33'333'333 ns, which drifts
 // 36 us/hour and doesn't matter.
 inline constexpr std::chrono::nanoseconds kControlPeriod{1'000'000'000 / kControlHz};
-inline constexpr double kControlPeriodMs =
-    static_cast<double>(kControlPeriod.count()) / 1e6;
+inline constexpr double kControlPeriodMs = static_cast<double>(kControlPeriod.count()) / 1e6;
 
 // --- §6 budget --------------------------------------------------------------
 
@@ -73,10 +72,12 @@ enum class Stitching { Discard, Ensemble, Rtc };
 // Tail conserves inference work by draining most of a chunk. Continuous starts
 // the next request as soon as the previous result is accepted, trading model
 // duty cycle for fresher observations.
-enum class RefreshPolicy { Tail, Continuous };
+enum class RefreshPolicy { Tail, Continuous, Horizon };
 
 struct RtcConfig {
-    int execution_horizon = 10;  // the paper's; disagrees with R by default (§15.5)
+    // Measured SmolVLA takes five 30 Hz ticks. Starting the next inference after
+    // one emitted action leaves six committed actions, matching s >= d.
+    int execution_horizon = 6;
     int inference_delay = steps_for(kBudgetTargetMs);
 };
 
@@ -86,8 +87,8 @@ struct RuntimeConfig {
     int padded_action_dim = kPaddedActionDim;
     int denoise_steps = kDenoiseSteps;
 
-    int refresh_trigger = 6;   // >= steps_for(kBudgetTargetMs), < chunk_size
-    int queue_capacity = 64;   // >= chunk_size + refresh_trigger
+    int refresh_trigger = 6;  // >= steps_for(kBudgetTargetMs), < chunk_size
+    int queue_capacity = 64;  // >= chunk_size + refresh_trigger
 
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;

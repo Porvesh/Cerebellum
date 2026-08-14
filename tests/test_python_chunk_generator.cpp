@@ -1,6 +1,6 @@
 #include <chrono>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -10,12 +10,12 @@ using namespace cerebellum;
 
 static int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
             std::printf("  FAIL %s:%d  CHECK(%s)\n", __FILE__, __LINE__, #cond); \
-            ++g_failures;                                                      \
-        }                                                                      \
+            ++g_failures;                                                        \
+        }                                                                        \
     } while (0)
 
 namespace {
@@ -31,22 +31,21 @@ std::shared_ptr<const ObservationSnapshot> observation(std::uint8_t first_pixel 
     image.channels = 3;
     image.height = 2;
     image.width = 3;
-    image.pixels = {first_pixel, 2, 3, 4, 5, 6, 7, 8, 9,
-                    10, 11, 12, 13, 14, 15, 16, 17, 18};
+    image.pixels = {first_pixel, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
     value->images.push_back(std::move(image));
     value->validate();
     return value;
 }
 
 class StaticObservationSource final : public ObservationSource {
-public:
+   public:
     explicit StaticObservationSource(std::shared_ptr<const ObservationSnapshot> value)
         : value_(std::move(value)) {}
 
     std::shared_ptr<const ObservationSnapshot> latest() noexcept override { return value_; }
     void publish(std::shared_ptr<const ObservationSnapshot> value) { value_ = std::move(value); }
 
-private:
+   private:
     std::shared_ptr<const ObservationSnapshot> value_;
 };
 
@@ -88,8 +87,10 @@ void test_round_trip_preserves_both_action_spaces() {
         }
         for (int d = config.action_dim; d < config.padded_action_dim; ++d) {
             CHECK(first.actions[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)] == 0.0F);
-            padded_tail_has_model_data = padded_tail_has_model_data ||
-                first.model_actions[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)] != 0.0F;
+            padded_tail_has_model_data =
+                padded_tail_has_model_data ||
+                first.model_actions[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)] !=
+                    0.0F;
         }
     }
     CHECK(padded_tail_has_model_data);
@@ -116,29 +117,45 @@ void test_missing_worker_fails_at_startup() {
     bool threw = false;
     try {
         PythonChunkGenerator generator(config, source, bad_options);
-    } catch (const std::runtime_error&) {
+    } catch (const std::runtime_error &) {
         threw = true;
     }
     CHECK(threw);
 }
 
-void test_unimplemented_rtc_is_explicit_and_recoverable() {
+void test_rtc_prefix_crosses_worker_boundary() {
     RuntimeConfig config;
     StaticObservationSource source(observation());
     PythonChunkGenerator generator(config, source, options());
-    Chunk chunk;
-    CHECK(!generator.generate(
-        InferenceRequest{0, -1, config.chunk_size, Stitching::Rtc}, chunk));
+    Chunk first;
+    CHECK(generator.generate(InferenceRequest{0, -1, config.chunk_size, Stitching::Rtc}, first));
     CHECK(generator.healthy());
-    CHECK(generator.last_error().find("RTC conditioning") != std::string::npos);
-    CHECK(generator.generate(
-        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
+
+    InferenceRequest request{5, 4, config.chunk_size, Stitching::Rtc};
+    request.rtc.source_chunk_id = 1;
+    request.rtc.prefix_first_step = 5;
+    request.rtc.prefix_count = 8;
+    request.rtc.inference_delay = 5;
+    request.rtc.execution_horizon = 6;
+    for (int i = 0; i < request.rtc.prefix_count; ++i) {
+        request.rtc.prefix[static_cast<std::size_t>(i)] =
+            first.model_actions[static_cast<std::size_t>(i + 5)];
+    }
+    Chunk conditioned;
+    CHECK(generator.generate(request, conditioned));
+    for (int i = 0; i < request.rtc.inference_delay; ++i) {
+        for (int d = 0; d < config.padded_action_dim; ++d) {
+            CHECK(conditioned
+                      .model_actions[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)] ==
+                  request.rtc.prefix[static_cast<std::size_t>(i)][static_cast<std::size_t>(d)]);
+        }
+    }
 }
 
 class RecordingSink final : public ActionSink {
-public:
+   public:
     explicit RecordingSink(std::size_t capacity) { emissions.reserve(capacity); }
-    void emit(const ActionEmission& emission) noexcept override { emissions.push_back(emission); }
+    void emit(const ActionEmission &emission) noexcept override { emissions.push_back(emission); }
     std::vector<ActionEmission> emissions;
 };
 
@@ -154,7 +171,7 @@ void test_runtime_publishes_python_chunk_to_control() {
     CHECK(loop.inference_stats().generated > 0);
     CHECK(loop.queue().consumer_stats().chunks_accepted > 0);
     bool emitted_python_action = false;
-    for (const auto& emission : sink.emissions) {
+    for (const auto &emission : sink.emissions) {
         emitted_python_action = emitted_python_action || !emission.fallback;
     }
     CHECK(emitted_python_action);
@@ -173,14 +190,13 @@ void test_missing_observation_does_not_break_worker() {
     CHECK(generator.generate(request, chunk));
 }
 
-std::shared_ptr<const ObservationSnapshot> observation_for(
-    const WorkerObservationSchema& schema) {
+std::shared_ptr<const ObservationSnapshot> observation_for(const WorkerObservationSchema &schema) {
     auto value = std::make_shared<ObservationSnapshot>();
     value->sequence = 101;
     value->capture_time = now();
     value->state.assign(schema.state_dim, 0.0F);
     value->task = "move the object to the target";
-    for (const WorkerImageSpec& expected : schema.images) {
+    for (const WorkerImageSpec &expected : schema.images) {
         CameraImage image;
         image.feature_name = expected.feature_name;
         image.channels = expected.channels;
@@ -194,16 +210,15 @@ std::shared_ptr<const ObservationSnapshot> observation_for(
 }
 
 void test_real_smolvla_bridge_when_requested() {
-    const char* enabled = std::getenv("CEREBELLUM_RUN_SMOLVLA_BRIDGE");
+    const char *enabled = std::getenv("CEREBELLUM_RUN_SMOLVLA_BRIDGE");
     if (!enabled || std::string(enabled) != "1") return;
 
     RuntimeConfig config;
     StaticObservationSource source(nullptr);
     auto real_options = options();
     real_options.runner = PythonRunner::SmolVla;
-    real_options.device = std::getenv("CEREBELLUM_SMOLVLA_DEVICE")
-                              ? std::getenv("CEREBELLUM_SMOLVLA_DEVICE")
-                              : "cpu";
+    real_options.device =
+        std::getenv("CEREBELLUM_SMOLVLA_DEVICE") ? std::getenv("CEREBELLUM_SMOLVLA_DEVICE") : "cpu";
     real_options.local_files_only = true;
     real_options.startup_timeout = std::chrono::minutes(15);
     real_options.inference_timeout = std::chrono::minutes(2);
@@ -211,21 +226,21 @@ void test_real_smolvla_bridge_when_requested() {
     PythonChunkGenerator generator(config, source, real_options);
     CHECK(generator.observation_schema().state_dim == 6);
     CHECK(generator.observation_schema().images.size() == 3);
-    for (const WorkerImageSpec& image : generator.observation_schema().images) {
+    for (const WorkerImageSpec &image : generator.observation_schema().images) {
         CHECK(image.channels == 3);
         CHECK(image.height == 256);
         CHECK(image.width == 256);
     }
     Chunk chunk;
     source.publish(observation());
-    CHECK(!generator.generate(
-        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
+    CHECK(
+        !generator.generate(InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
     CHECK(generator.healthy());
     CHECK(generator.last_error().find("schema") != std::string::npos);
 
     source.publish(observation_for(generator.observation_schema()));
-    CHECK(generator.generate(
-        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
+    CHECK(
+        generator.generate(InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
     CHECK(chunk.count == 50);
     CHECK(chunk.stamps.obs_seq == 101);
 }
@@ -235,7 +250,7 @@ void test_real_smolvla_bridge_when_requested() {
 int main() {
     test_round_trip_preserves_both_action_spaces();
     test_missing_worker_fails_at_startup();
-    test_unimplemented_rtc_is_explicit_and_recoverable();
+    test_rtc_prefix_crosses_worker_boundary();
     test_runtime_publishes_python_chunk_to_control();
     test_missing_observation_does_not_break_worker();
     test_real_smolvla_bridge_when_requested();

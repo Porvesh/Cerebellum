@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from .messages import ActionChunkResult, InferenceRequest, Observation
+from .rtc import RtcProcessor, RtcRuntimeConfig
 
 SUPPORTED_LEROBOT_VERSION = "0.4.4"
 DEFAULT_MODEL_ID = "lerobot/smolvla_base"
@@ -42,6 +43,9 @@ class SmolVLARunner:
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
         self.torch = torch_module
+        # Enable SmolVLA's RTC call site, but install Cerebellum's processor.
+        self.policy.config.rtc_config = RtcRuntimeConfig()
+        self.policy.model.rtc_processor = RtcProcessor(torch_module)
         self.last_timing: ForwardTiming | None = None
 
     @classmethod
@@ -79,6 +83,10 @@ class SmolVLARunner:
             preprocessor_overrides={"device_processor": {"device": device}},
         )
         policy.eval()
+        # RTC differentiates only with respect to the action latent. Freezing
+        # parameters prevents needless parameter graphs and makes the cached
+        # image/language prefix safe to reuse across all denoising VJPs.
+        policy.requires_grad_(False)
         return cls(
             policy=policy,
             preprocessor=preprocessor,
@@ -129,8 +137,6 @@ class SmolVLARunner:
     def predict(
         self, request: InferenceRequest, observation: Observation, *, seed: int = 0
     ) -> ActionChunkResult:
-        if request.stitching == "rtc":
-            raise NotImplementedError("RTC conditioning is the next model-runner milestone")
         if request.action_count != self.chunk_size:
             raise ValueError(
                 f"checkpoint emits {self.chunk_size} actions, request asks for {request.action_count}"
@@ -164,7 +170,17 @@ class SmolVLARunner:
             dtype=state.dtype,
         )
 
-        with torch.inference_mode():
+        rtc_kwargs: dict[str, Any] = {}
+        if request.rtc is not None:
+            rtc_kwargs = {
+                "prev_chunk_left_over": torch.from_numpy(request.rtc.prefix)
+                .unsqueeze(0)
+                .to(device=state.device, dtype=state.dtype),
+                "inference_delay": request.rtc.inference_delay,
+                "execution_horizon": request.rtc.execution_horizon,
+            }
+        context = torch.enable_grad() if request.rtc is not None else torch.inference_mode()
+        with context:
             model_actions = self.policy.model.sample_actions(
                 images,
                 image_masks,
@@ -172,6 +188,7 @@ class SmolVLARunner:
                 language_masks,
                 state,
                 noise=noise,
+                **rtc_kwargs,
             )
         if self.policy.config.device.startswith("cuda"):
             torch.cuda.synchronize()

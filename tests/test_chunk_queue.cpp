@@ -19,20 +19,23 @@ static int g_failures = 0;
 #define CHECK(cond)                                                              \
     do {                                                                         \
         if (!(cond)) {                                                           \
-            std::printf("  FAIL %s:%d  CHECK(%s)\n", __FILE__, __LINE__, #cond);   \
+            std::printf("  FAIL %s:%d  CHECK(%s)\n", __FILE__, __LINE__, #cond); \
             ++g_failures;                                                        \
         }                                                                        \
     } while (0)
 
-#define CHECK_THROWS(expr)                                                       \
-    do {                                                                         \
-        bool threw = false;                                                      \
-        try { (void)(expr); } catch (const std::exception&) { threw = true; }     \
-        if (!threw) {                                                            \
-            std::printf("  FAIL %s:%d  expected throw: %s\n", __FILE__, __LINE__,  \
-                        #expr);                                                  \
-            ++g_failures;                                                        \
-        }                                                                        \
+#define CHECK_THROWS(expr)                                                                \
+    do {                                                                                  \
+        bool threw = false;                                                               \
+        try {                                                                             \
+            (void)(expr);                                                                 \
+        } catch (const std::exception&) {                                                 \
+            threw = true;                                                                 \
+        }                                                                                 \
+        if (!threw) {                                                                     \
+            std::printf("  FAIL %s:%d  expected throw: %s\n", __FILE__, __LINE__, #expr); \
+            ++g_failures;                                                                 \
+        }                                                                                 \
     } while (0)
 
 // A chunk whose every action is `value` in every real dim, so a seam or a blend
@@ -60,7 +63,10 @@ static Chunk* fill(ActionChunkQueue& q, std::int64_t first_step, int count, floa
 static RuntimeConfig cfg_with(Stitching s) {
     RuntimeConfig cfg{};
     cfg.stitching = s;
-    if (s == Stitching::Rtc) cfg.rtc.execution_horizon = 5;  // <= R, per §15.5
+    if (s == Stitching::Rtc) {
+        cfg.refresh_policy = RefreshPolicy::Horizon;
+        cfg.rtc.execution_horizon = 5;
+    }
     cfg.validate();
     return cfg;
 }
@@ -78,8 +84,8 @@ static void test_publish_then_drain() {
     for (std::int64_t step = 0; step < kChunkSize; ++step) {
         CHECK(q.pop(step, sched.deadline(step), a, rec));
         CHECK(a[0] == 1.0f);
-        CHECK(rec.index == static_cast<int>(step));      // index within the chunk
-        CHECK(rec.chunk.chunk_id == 7);                  // §5.2 provenance survives
+        CHECK(rec.index == static_cast<int>(step));  // index within the chunk
+        CHECK(rec.chunk.chunk_id == 7);              // §5.2 provenance survives
         CHECK(rec.t_deadline == sched.deadline(step));
         CHECK(q.last_emitted_step() == step);
     }
@@ -150,7 +156,7 @@ static void test_continuous_refresh_starts_after_each_accept() {
     CHECK(!q.should_refresh());  // one completed chunk is waiting for control
     CHECK(q.pop(0, sched.deadline(0), a, rec));
     CHECK(q.remaining() == kChunkSize - 1);
-    CHECK(q.should_refresh());   // do not wait for the tail trigger
+    CHECK(q.should_refresh());  // do not wait for the tail trigger
 }
 
 // --- §4.3, discard ----------------------------------------------------------
@@ -172,9 +178,9 @@ static void test_discard_skips_the_stale_prefix() {
     q.publish(fill(q, 3, 20, 0.25f, /*chunk_id=*/2));
 
     CHECK(q.pop(5, sched.deadline(5), a, rec));
-    CHECK(a[0] == 0.25f);           // the new chunk, not the old one
+    CHECK(a[0] == 0.25f);  // the new chunk, not the old one
     CHECK(rec.chunk.chunk_id == 2);
-    CHECK(rec.index == 2);          // step 5 is index 2 of a chunk starting at 3
+    CHECK(rec.index == 2);  // step 5 is index 2 of a chunk starting at 3
     CHECK(q.consumer_stats().actions_discarded == 2);
 
     // The jump at the join is the thing §11.5 has a column for and nobody has
@@ -234,7 +240,7 @@ static void test_ensemble_releases_the_old_chunk() {
     for (int k = 0; k < 12; ++k) {
         const std::int64_t base = k * 5;
         Chunk* c = fill(q, base, 10, static_cast<float>(k));
-        CHECK(c != nullptr);   // the pool must recycle
+        CHECK(c != nullptr);  // the pool must recycle
         if (!c) break;
         q.publish(c);
         for (std::int64_t step = base; step < base + 5; ++step) {
@@ -254,7 +260,7 @@ static void test_newest_chunk_wins() {
     ActionRecord rec;
 
     q.publish(fill(q, 0, 20, 1.0f, 1));
-    q.publish(fill(q, 0, 20, 2.0f, 2));   // both waiting, neither accepted yet
+    q.publish(fill(q, 0, 20, 2.0f, 2));  // both waiting, neither accepted yet
 
     // §5's rule applied to this side of the runtime: the older chunk describes a
     // world that has already moved. Take the newest, free the rest, count it.
@@ -298,7 +304,7 @@ static void test_rtc_exposes_the_in_process_cursor() {
     Action a{};
     ActionRecord rec;
 
-    CHECK(q.last_emitted_step() == -1);   // nothing promised yet
+    CHECK(q.last_emitted_step() == -1);  // nothing promised yet
 
     q.publish(fill(q, 0, kChunkSize, 1.0f, 1));
     for (std::int64_t step = 0; step < 4; ++step) {

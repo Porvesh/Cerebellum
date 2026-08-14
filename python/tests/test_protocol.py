@@ -12,6 +12,7 @@ from cerebellum_model.protocol import (
     WireImage,
     WireObservation,
     WireRequest,
+    WireRtcConditioning,
     WireResponse,
     WireTiming,
     decode_hello,
@@ -112,6 +113,27 @@ def test_request_round_trips_every_observation_value() -> None:
             expected.width,
         )
         np.testing.assert_array_equal(actual.pixels, expected.pixels)
+
+
+def test_rtc_prefix_round_trips_in_model_space() -> None:
+    original = request()
+    prefix = np.arange(8 * 32, dtype=np.float32).reshape(8, 32)
+    rtc_request = WireRequest(
+        request_id=original.request_id,
+        first_step=original.first_step,
+        last_emitted_step=original.last_emitted_step,
+        action_count=original.action_count,
+        stitching=2,
+        seed=original.seed,
+        observation=original.observation,
+        rtc=WireRtcConditioning(17, original.first_step, 5, 6, prefix),
+    )
+    decoded = decode_request(encode_request(rtc_request))
+    assert decoded.rtc is not None
+    assert decoded.rtc.source_chunk_id == 17
+    assert decoded.rtc.inference_delay == 5
+    assert decoded.rtc.execution_horizon == 6
+    np.testing.assert_array_equal(decoded.rtc.prefix, prefix)
 
 
 def test_response_contains_both_action_spaces() -> None:

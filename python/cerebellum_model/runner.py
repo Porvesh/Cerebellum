@@ -7,6 +7,7 @@ from typing import Protocol
 import numpy as np
 
 from .messages import ActionChunkResult, InferenceRequest, Observation
+from .rtc import prefix_weights
 
 
 class ActionChunkRunner(Protocol):
@@ -31,6 +32,20 @@ class SyntheticRunner:
         model_actions = rng.standard_normal(
             (request.action_count, self.model_dim), dtype=np.float32
         )
+        if request.rtc is not None:
+            prefix = request.rtc.prefix
+            if prefix.shape[1] != self.model_dim:
+                raise ValueError("RTC prefix model dimension mismatch")
+            overlap = min(prefix.shape[0], request.action_count)
+            weights = prefix_weights(
+                request.rtc.inference_delay,
+                request.rtc.execution_horizon,
+                request.action_count,
+            )[:overlap, None]
+            model_actions[:overlap] = (
+                weights * prefix[:overlap] +
+                (np.float32(1.0) - weights) * model_actions[:overlap]
+            )
         # Synthetic mode has no normalization pipeline, so the executable view
         # is simply the real-dimensional slice.
         robot_actions = model_actions[:, : self.robot_dim].copy()

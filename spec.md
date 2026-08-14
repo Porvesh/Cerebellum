@@ -703,22 +703,18 @@ or extrapolate? Holding is the obvious first choice (it is the only one of the t
 can't inject a discontinuity of its own), but pick it deliberately and count the event
 either way: an underrun that gets papered over is a missed deadline you never hear about.
 
-### 15.5 `R` and `execution_horizon` are the same quantity from two sides
+### 15.5 RTC uses an execution-horizon trigger, not the tail trigger `R`
 
-The refresh trigger says *when to start inferring*. RTC's `execution_horizon` says *how many
-actions we promise not to change*. They are measured in the same units and they constrain
-each other, and neither paper writes down the relationship:
+The earlier design incorrectly coupled RTC's execution horizon to Discard's tail refresh
+trigger. In the paper's receding-horizon schedule, inference starts after `s - d` actions
+from the accepted chunk, where `s` is `execution_horizon` and `d` is the measured inference
+delay. The committed prefix therefore covers every action executed while inference runs.
 
-- `execution_horizon > R` → you froze actions you will not reach. The guidance is pulling
-  the new chunk toward a prefix that gets discarded, which wastes the constraint and may
-  actively distort the actions you do execute.
-- `execution_horizon < inference_delay` → you left actions unconstrained that are already
-  committed. The seam comes back, in the one place RTC exists to remove it.
-
-The safe reading is `inference_delay ≤ execution_horizon ≤ R`, all three derived from the
-same measured p99 rather than configured independently. Confirm it experimentally: sweep
-`execution_horizon` against seam discontinuity at fixed `R` and find out whether the
-predicted cliff is there.
+The safe relationship is `inference_delay ≤ execution_horizon ≤ chunk_size`. Cerebellum's
+`RefreshPolicy::Horizon` implements the `s - d` trigger. `R` remains a Tail-policy setting
+and is not used to schedule RTC. Because guided inference can cost more than the initial
+unguided pass, the runtime updates `d` from measured wall time and expands `s` when needed;
+an inference spanning the full chunk is reported as an RTC overrun.
 
 ### 15.6 RTC and CUDA graph capture may be mutually exclusive
 

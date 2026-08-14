@@ -70,7 +70,7 @@ versioned handshake rejects mismatched chunk and action dimensions before contro
 Python model side also loads `lerobot/smolvla_base` and returns both representations needed by
 the system:
 
-- `model_actions`: `50 × 32`, padded model space retained for future RTC conditioning.
+- `model_actions`: `50 × 32`, padded model space used for RTC conditioning.
 - `robot_actions`: `50 × 6`, sliced and postprocessed for execution.
 
 The base checkpoint smoke test proves loading, preprocessing, denoising, and output shapes; it
@@ -86,8 +86,10 @@ ctest --test-dir build --output-on-failure
 
 The bridge currently uses an in-memory observation source. The worker can run either the fast
 synthetic backend or the real SmolVLA checkpoint; SmolVLA advertises its state and camera schema
-during startup, and C++ rejects mismatched observations before sending inference requests. RTC
-requests are rejected explicitly until committed-prefix conditioning is implemented.
+during startup, and C++ rejects mismatched observations before sending inference requests.
+RTC requests carry the retained chunk identity and aligned committed model-space prefix. The
+SmolVLA worker applies gradient-guided inpainting during every denoising step; the control
+thread still only sees postprocessed robot-space actions.
 
 The real cross-process C++ → SmolVLA → C++ test is opt-in because it loads the checkpoint:
 
@@ -136,6 +138,10 @@ CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
   ./build/bench_runtime --runner smolvla --device cuda --warmup-inferences 10 \
   --ticks 300 --refresh-trigger 6 --refresh-policy tail \
   --output results/runtime_discard_smolvla_h100_baseline.json
+
+# RTC: start after s-d actions and inpaint actions committed during inference
+./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
+  --ticks 300 --refresh-trigger 6 --stitching rtc --refresh-policy horizon
 ```
 
 This report covers all action emissions, including fallbacks, and separately reports action

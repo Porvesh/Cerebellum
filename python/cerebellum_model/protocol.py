@@ -10,13 +10,13 @@ from typing import BinaryIO
 import numpy as np
 from numpy.typing import NDArray
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 _FRAME = struct.Struct(">I")
 _HELLO = struct.Struct(">4sHBBIHHHHI")
 _HELLO_IMAGE = struct.Struct(">HHHH")
-_REQUEST = struct.Struct(">4sHBBQqqIIQqIHI")
+_REQUEST = struct.Struct(">4sHBBQqqIIQqIHIQqIIIHH")
 _IMAGE = struct.Struct(">HHHHI")
 _RESPONSE = struct.Struct(">4sHBBQqQqIHHQQQQI")
 _RESPONSE_ENCODE_NS_OFFSET = struct.calcsize(">4sHBBQqQqIHHQQQ")
@@ -66,6 +66,15 @@ class WireObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class WireRtcConditioning:
+    source_chunk_id: int
+    prefix_first_step: int
+    inference_delay: int
+    execution_horizon: int
+    prefix: NDArray[np.float32]
+
+
+@dataclass(frozen=True, slots=True)
 class WireRequest:
     request_id: int
     first_step: int
@@ -74,6 +83,7 @@ class WireRequest:
     stitching: int
     seed: int
     observation: WireObservation
+    rtc: WireRtcConditioning | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +227,16 @@ def encode_request(request: WireRequest) -> bytes:
     if len(observation.images) > 0xFFFF:
         raise ProtocolError("too many images")
 
+    rtc = request.rtc
+    prefix = np.empty((0, 0), dtype=np.float32)
+    if rtc is not None:
+        prefix = np.ascontiguousarray(rtc.prefix, dtype=np.float32)
+        if prefix.ndim != 2 or prefix.shape[0] == 0:
+            raise ProtocolError("RTC prefix must have shape (steps, dimensions)")
+        if rtc.prefix_first_step != request.first_step:
+            raise ProtocolError("RTC prefix is not aligned with first_step")
+        if rtc.inference_delay <= 0 or rtc.execution_horizon < rtc.inference_delay:
+            raise ProtocolError("invalid RTC horizons")
     payload = bytearray(
         _REQUEST.pack(
             REQUEST_MAGIC,
@@ -233,8 +253,16 @@ def encode_request(request: WireRequest) -> bytes:
             state.size,
             len(observation.images),
             len(task),
+            rtc.source_chunk_id if rtc is not None else 0,
+            rtc.prefix_first_step if rtc is not None else 0,
+            prefix.shape[0],
+            rtc.inference_delay if rtc is not None else 0,
+            rtc.execution_horizon if rtc is not None else 0,
+            prefix.shape[1] if rtc is not None else 0,
+            0,
         )
     )
+    payload.extend(prefix.astype(">f4", copy=False).tobytes())
     payload.extend(state.astype(">f4", copy=False).tobytes())
     payload.extend(task)
     for image in observation.images:
@@ -282,6 +310,13 @@ def decode_request(payload: bytes) -> WireRequest:
         state_count,
         image_count,
         task_size,
+        rtc_source_chunk_id,
+        rtc_prefix_first_step,
+        rtc_prefix_count,
+        rtc_inference_delay,
+        rtc_execution_horizon,
+        rtc_prefix_dim,
+        _rtc_reserved,
     ) = _REQUEST.unpack_from(payload)
     if magic != REQUEST_MAGIC:
         raise ProtocolError("bad request magic")
@@ -289,6 +324,30 @@ def decode_request(payload: bytes) -> WireRequest:
         raise ProtocolError(f"unsupported protocol version: {version}")
 
     cursor = _REQUEST.size
+    rtc = None
+    if rtc_prefix_count:
+        if rtc_prefix_dim == 0:
+            raise ProtocolError("RTC prefix dimension is zero")
+        prefix_bytes = _take(
+            payload, cursor, rtc_prefix_count * rtc_prefix_dim * 4, "RTC prefix"
+        )
+        cursor += rtc_prefix_count * rtc_prefix_dim * 4
+        prefix = np.frombuffer(prefix_bytes, dtype=">f4").astype(np.float32).reshape(
+            rtc_prefix_count, rtc_prefix_dim
+        )
+        if rtc_prefix_first_step != first:
+            raise ProtocolError("RTC prefix is not aligned with first_step")
+        if rtc_inference_delay <= 0 or rtc_execution_horizon < rtc_inference_delay:
+            raise ProtocolError("invalid RTC horizons")
+        rtc = WireRtcConditioning(
+            rtc_source_chunk_id,
+            rtc_prefix_first_step,
+            rtc_inference_delay,
+            rtc_execution_horizon,
+            prefix,
+        )
+    elif any((rtc_source_chunk_id, rtc_prefix_dim)):
+        raise ProtocolError("empty RTC prefix has nonzero metadata")
     state_bytes = _take(payload, cursor, state_count * 4, "state")
     cursor += state_count * 4
     state = np.frombuffer(state_bytes, dtype=">f4").astype(np.float32)
@@ -328,6 +387,7 @@ def decode_request(payload: bytes) -> WireRequest:
         stitching,
         seed,
         WireObservation(sequence, capture_ns, state, tuple(images), task),
+        rtc,
     )
 
 

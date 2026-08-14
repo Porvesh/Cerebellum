@@ -80,3 +80,17 @@ Raw runtime reports:
 - [`runtime_discard_continuous_synthetic_baseline.json`](runtime_discard_continuous_synthetic_baseline.json)
 - [`runtime_discard_smolvla_h100_baseline.json`](runtime_discard_smolvla_h100_baseline.json)
 - [`runtime_discard_continuous_smolvla_h100_baseline.json`](runtime_discard_continuous_smolvla_h100_baseline.json)
+
+## RTC synthetic integration check
+
+The horizon scheduler and committed-prefix path ran for 90 ticks with the same
+149 ms controlled model delay. It generated 18 chunks, recorded no RTC inference
+overruns and no staleness violations among 86 real actions; p99 staleness was
+300.01 ms. The four underruns are cold-start ticks before the first chunk exists.
+
+This synthetic backend verifies scheduling, prefix alignment, IPC, and queue
+behavior. It does not measure the extra GPU cost or action quality of gradient
+guidance. A real SmolVLA/H100 RTC baseline remains required when an isolated GPU
+has enough memory; all four GPUs were externally occupied during this change.
+
+- [`runtime_rtc_synthetic_baseline.json`](runtime_rtc_synthetic_baseline.json)

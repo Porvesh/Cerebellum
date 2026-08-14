@@ -6,9 +6,9 @@
 //
 // It also commits to an API. If you want a different shape — validate() in a
 // constructor instead of a method, a typed ConfigError like Axon's instead of
-// std::invalid_argument, chrono::duration<double,milli> instead of a plain double
-// — change it and move this test with it. The assertions about NUMBERS are the
-// part that must survive; the spelling is yours.
+// std::invalid_argument, chrono::duration<double,milli> instead of a plain
+// double — change it and move this test with it. The assertions about NUMBERS
+// are the part that must survive; the spelling is yours.
 
 #include <chrono>
 #include <cstdio>
@@ -21,25 +21,28 @@ using namespace cerebellum;
 
 static int g_failures = 0;
 
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
+#define CHECK(cond)                                                              \
+    do {                                                                         \
+        if (!(cond)) {                                                           \
             std::printf("  FAIL %s:%d  CHECK(%s)\n", __FILE__, __LINE__, #cond); \
-            ++g_failures;                                                      \
-        }                                                                      \
+            ++g_failures;                                                        \
+        }                                                                        \
     } while (0)
 
 // Expect `expr` to throw. Used for the validators — a config that cannot work
 // must refuse to be used, not limp along and produce a plausible-looking p99.
-#define CHECK_THROWS(expr)                                                     \
-    do {                                                                       \
-        bool threw = false;                                                    \
-        try { (void)(expr); } catch (const std::exception&) { threw = true; }   \
-        if (!threw) {                                                          \
-            std::printf("  FAIL %s:%d  expected throw: %s\n",                  \
-                        __FILE__, __LINE__, #expr);                            \
-            ++g_failures;                                                      \
-        }                                                                      \
+#define CHECK_THROWS(expr)                                                                \
+    do {                                                                                  \
+        bool threw = false;                                                               \
+        try {                                                                             \
+            (void)(expr);                                                                 \
+        } catch (const std::exception &) {                                                \
+            threw = true;                                                                 \
+        }                                                                                 \
+        if (!threw) {                                                                     \
+            std::printf("  FAIL %s:%d  expected throw: %s\n", __FILE__, __LINE__, #expr); \
+            ++g_failures;                                                                 \
+        }                                                                                 \
     } while (0)
 
 // --- the two numbers everything is judged against ---------------------------
@@ -62,10 +65,10 @@ static void test_invariant() {
 // --- facts read out of the checkpoint ---------------------------------------
 
 static void test_checkpoint_facts() {
-    CHECK(kChunkSize == 50);          // chunk_size / n_action_steps
-    CHECK(kActionDim == 6);           // output_features["action"].shape
-    CHECK(kDenoiseSteps == 10);       // num_steps
-    CHECK(kPaddedActionDim == 32);    // max_action_dim
+    CHECK(kChunkSize == 50);        // chunk_size / n_action_steps
+    CHECK(kActionDim == 6);         // output_features["action"].shape
+    CHECK(kDenoiseSteps == 10);     // num_steps
+    CHECK(kPaddedActionDim == 32);  // max_action_dim
     // The model denoises in 32 dims and slices to 6, so RTC's committed prefix
     // must live in the padded space (spec.md §4.5).
     CHECK(kActionDim < kPaddedActionDim);
@@ -98,15 +101,15 @@ static void test_staleness_bound_conflicts_with_chunk_size() {
 }
 
 static void test_horizon_chain() {
-    // delay <= horizon <= R (spec.md §15.5).
-    check_horizons(3, 5, 6);   // must not throw
+    // delay <= horizon <= chunk size.
+    check_horizons(3, 5, 50);  // must not throw
 
     // Below the delay: committed actions left unconstrained, so the seam returns
     // in the one place RTC exists to remove it.
-    CHECK_THROWS(check_horizons(5, 3, 6));
+    CHECK_THROWS(check_horizons(5, 3, 50));
 
-    // Above R: freezing actions the control thread will never reach.
-    CHECK_THROWS(check_horizons(3, 10, 6));
+    // A committed prefix cannot extend beyond the model chunk.
+    CHECK_THROWS(check_horizons(3, 51, 50));
 }
 
 // --- validation -------------------------------------------------------------
@@ -124,27 +127,26 @@ static void test_defaults_are_valid() {
 }
 
 static void test_validation_rejects_unusable_configs() {
-    {   // R >= H re-infers before the previous chunk produced anything.
+    {  // R >= H re-infers before the previous chunk produced anything.
         RuntimeConfig cfg{};
         cfg.chunk_size = 10;
         cfg.refresh_trigger = 10;
         CHECK_THROWS(cfg.validate());
     }
-    {   // A chunk pushed while R remain has to fit.
+    {  // A chunk pushed while R remain has to fit.
         RuntimeConfig cfg{};
-        cfg.queue_capacity = 50;   // == H, no room for the R still queued
+        cfg.queue_capacity = 50;  // == H, no room for the R still queued
         CHECK_THROWS(cfg.validate());
     }
-    {   // RTC's default execution_horizon is the paper's 10; R defaults to 6.
-        // Those disagree, and §15.5 says the disagreement matters — so enabling
-        // RTC must fail until they are reconciled from a MEASURED p99, not by
-        // picking numbers that pass.
+    {  // The RTC defaults are now the measured five-tick inference delay plus
+        // one executed action: d=5, s=6, R=6.
         RuntimeConfig cfg{};
         cfg.stitching = Stitching::Rtc;
-        CHECK_THROWS(cfg.validate());
+        cfg.refresh_policy = RefreshPolicy::Horizon;
+        cfg.validate();
 
-        cfg.rtc.execution_horizon = 5;   // <= R
-        cfg.validate();                  // now fine
+        cfg.rtc.execution_horizon = 4;
+        CHECK_THROWS(cfg.validate());
     }
 }
 

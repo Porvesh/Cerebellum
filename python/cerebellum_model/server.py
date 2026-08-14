@@ -12,7 +12,7 @@ import zlib
 
 import numpy as np
 
-from .messages import InferenceRequest, Observation
+from .messages import InferenceRequest, Observation, RtcConditioning
 from .protocol import (
     ProtocolError,
     WireImageSpec,
@@ -153,19 +153,27 @@ def serve(*, runner: Any, spec: RunnerSpec, synthetic_seed: bool) -> int:
                 stitching = _STITCHING[wire.stitching]
             except KeyError as exc:
                 raise ProtocolError(f"unknown stitching value: {wire.stitching}") from exc
-            if stitching == "rtc":
-                raise NotImplementedError("RTC conditioning is not implemented")
             observation_started = monotonic_ns()
             _validate_observation_schema(wire, spec)
             observation = _observation_from_wire(wire)
             observation_ns = monotonic_ns() - observation_started
             model_started = monotonic_ns()
+            rtc = None
+            if wire.rtc is not None:
+                rtc = RtcConditioning(
+                    source_chunk_id=wire.rtc.source_chunk_id,
+                    prefix_first_step=wire.rtc.prefix_first_step,
+                    inference_delay=wire.rtc.inference_delay,
+                    execution_horizon=wire.rtc.execution_horizon,
+                    prefix=wire.rtc.prefix,
+                )
             result = runner.predict(
                 InferenceRequest(
                     first_step=wire.first_step,
                     last_emitted_step=wire.last_emitted_step,
                     action_count=wire.action_count,
                     stitching=stitching,
+                    rtc=rtc,
                 ),
                 observation,
                 seed=_seed_for_observation(wire) if synthetic_seed else wire.seed,

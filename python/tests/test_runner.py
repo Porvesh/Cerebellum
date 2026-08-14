@@ -3,7 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cerebellum_model.messages import ActionChunkResult, InferenceRequest, Observation
+from cerebellum_model.messages import (
+    ActionChunkResult,
+    InferenceRequest,
+    Observation,
+    RtcConditioning,
+)
 from cerebellum_model.runner import SyntheticRunner
 
 
@@ -43,6 +48,20 @@ def test_synthetic_runner_is_deterministic_for_fixed_noise() -> None:
     first = runner.predict(request, observation(), seed=123)
     second = runner.predict(request, observation(), seed=123)
     np.testing.assert_array_equal(first.model_actions, second.model_actions)
+
+
+def test_synthetic_rtc_freezes_committed_prefix() -> None:
+    prefix = np.arange(8 * 32, dtype=np.float32).reshape(8, 32)
+    request = InferenceRequest(
+        first_step=5,
+        last_emitted_step=4,
+        action_count=10,
+        stitching="rtc",
+        rtc=RtcConditioning(1, 5, 5, 6, prefix),
+    )
+    result = SyntheticRunner().predict(request, observation(), seed=123)
+    np.testing.assert_array_equal(result.model_actions[:5], prefix[:5])
+    assert not np.array_equal(result.model_actions[6:8], prefix[6:8])
 
 
 def test_result_rejects_non_finite_actions() -> None:
