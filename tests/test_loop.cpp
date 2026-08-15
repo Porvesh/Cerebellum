@@ -162,6 +162,20 @@ void test_two_loops_run_concurrently() {
     CHECK(real_actions > 50);
 }
 
+void test_rtc_delay_estimator_keeps_recent_worst_case() {
+    RtcDelayEstimator estimator(/*configured_floor=*/5);
+    CHECK(estimator.conservative_steps() == 5);
+    estimator.observe(3);
+    CHECK(estimator.conservative_steps() == 5);
+    estimator.observe(8);
+    CHECK(estimator.conservative_steps() == 8);
+
+    // Ten newer four-step samples evict the old eight-step outlier, but the
+    // configured five-step safety floor still applies.
+    for (std::size_t i = 0; i < kRtcDelayWindow; ++i) estimator.observe(4);
+    CHECK(estimator.conservative_steps() == 5);
+}
+
 void test_rtc_retains_and_aligns_model_prefix_on_worker() {
     RuntimeConfig cfg = small_config();
     cfg.stitching = Stitching::Rtc;
@@ -253,6 +267,7 @@ void test_external_stop_joins_both_loops() {
 
 int main() {
     test_two_loops_run_concurrently();
+    test_rtc_delay_estimator_keeps_recent_worst_case();
     test_rtc_retains_and_aligns_model_prefix_on_worker();
     test_underrun_policies();
     test_slow_control_skips_expired_steps();

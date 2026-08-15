@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -75,6 +76,31 @@ struct InferenceStats {
     std::uint64_t publish_retries = 0;
     std::uint64_t generation_wall_ns = 0;
     std::uint64_t rtc_inference_overruns = 0;
+};
+
+// RTC uses a conservative recent latency rather than trusting the most recent
+// (possibly lucky) request. Fixed storage keeps this estimator allocation-free.
+class RtcDelayEstimator {
+   public:
+    explicit RtcDelayEstimator(int configured_floor) : floor_(std::max(1, configured_floor)) {}
+
+    void observe(int steps) noexcept {
+        samples_[next_] = std::max(1, steps);
+        next_ = (next_ + 1) % samples_.size();
+        count_ = std::min(count_ + 1, samples_.size());
+    }
+
+    int conservative_steps() const noexcept {
+        int result = floor_;
+        for (std::size_t i = 0; i < count_; ++i) result = std::max(result, samples_[i]);
+        return result;
+    }
+
+   private:
+    const int floor_;
+    std::array<int, kRtcDelayWindow> samples_{};
+    std::size_t next_ = 0;
+    std::size_t count_ = 0;
 };
 
 class RuntimeLoop {
@@ -203,6 +229,7 @@ class RuntimeLoop {
         std::uint64_t next_chunk_id = 1;
         Chunk retained{};  // worker-private copy; never touches consumer-owned slots
         bool have_retained = false;
+        RtcDelayEstimator delay_estimator(cfg_.rtc.inference_delay);
 
         while (!stop_.load(std::memory_order_acquire)) {
             if (ready_to_publish) {
@@ -281,7 +308,8 @@ class RuntimeLoop {
             if (cfg_.stitching == Stitching::Rtc && measured_delay >= cfg_.chunk_size) {
                 ++inference_stats_.rtc_inference_overruns;
             }
-            queue_.update_rtc_timing(measured_delay);
+            delay_estimator.observe(measured_delay);
+            queue_.update_rtc_timing(delay_estimator.conservative_steps());
             retained = *slot;
             have_retained = true;
             ++inference_stats_.generated;

@@ -102,6 +102,8 @@ CEREBELLUM_SMOLVLA_DEVICE=cpu \
 
 Use `CEREBELLUM_SMOLVLA_DEVICE=cuda` when a GPU has enough free memory. Model startup and
 per-request inference use separate configurable timeouts in `PythonChunkGeneratorOptions`.
+Set `CEREBELLUM_RUN_SMOLVLA_RTC=1` to run the direct two-request RTC smoke test; it verifies
+that guided denoising moves the new committed prefix closer to the retained chunk prefix.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

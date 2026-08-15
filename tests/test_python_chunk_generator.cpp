@@ -243,6 +243,20 @@ void test_real_smolvla_bridge_when_requested() {
         generator.generate(InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, chunk));
     CHECK(chunk.count == 50);
     CHECK(chunk.stamps.obs_seq == 101);
+
+    InferenceRequest rtc_request{5, 4, config.chunk_size, Stitching::Rtc};
+    rtc_request.rtc.source_chunk_id = 1;
+    rtc_request.rtc.prefix_first_step = 5;
+    rtc_request.rtc.prefix_count = config.chunk_size - 5;
+    rtc_request.rtc.inference_delay = 5;
+    rtc_request.rtc.execution_horizon = 6;
+    for (int i = 0; i < rtc_request.rtc.prefix_count; ++i) {
+        rtc_request.rtc.prefix[static_cast<std::size_t>(i)] =
+            chunk.model_actions[static_cast<std::size_t>(i + 5)];
+    }
+    Chunk conditioned;
+    CHECK(generator.generate(rtc_request, conditioned));
+    CHECK(conditioned.count == 50);
 }
 
 }  // namespace

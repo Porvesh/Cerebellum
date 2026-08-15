@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 
 namespace cerebellum {
 
@@ -58,6 +59,7 @@ inline constexpr int kChunkSize = kSmolVlaBase.chunk_size;
 inline constexpr int kActionDim = kSmolVlaBase.action_dim;
 inline constexpr int kDenoiseSteps = kSmolVlaBase.denoise_steps;
 inline constexpr int kPaddedActionDim = kSmolVlaBase.padded_action_dim;
+inline constexpr std::size_t kRtcDelayWindow = 10;
 
 // --- policies ---------------------------------------------------------------
 
