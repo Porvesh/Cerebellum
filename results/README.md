@@ -94,3 +94,22 @@ guidance. A real SmolVLA/H100 RTC baseline remains required when an isolated GPU
 has enough memory; all four GPUs were externally occupied during this change.
 
 - [`runtime_rtc_synthetic_baseline.json`](runtime_rtc_synthetic_baseline.json)
+
+## Real SmolVLA RTC baseline and Nsight attribution
+
+An isolated H100 run verified both the direct two-request RTC path and the full
+C++ → Python → SmolVLA → C++ bridge. The 300-tick unprofiled runtime generated
+26 chunks with no RTC inference overrun, but guided generation averaged about
+368 ms. This made the conservative horizon expand and produced 766.66 ms p99
+staleness: 290 of 296 real actions exceeded the 350 ms target.
+
+Nsight Systems then profiled one conditioned 10-step request. Under tracing,
+the ten base-denoiser ranges totaled 249.75 ms and the ten RTC VJP/autograd
+ranges totaled 268.62 ms. Prefix preparation plus correction application took
+less than 2.5 ms. The important conclusion is attribution, not traced latency:
+the true denoiser VJP costs roughly another model pass, while Cerebellum's RTC
+bookkeeping is negligible. The next controlled experiment is the paper's
+five-step RTC setting and a 5/6/8/10-step quality/latency sweep.
+
+- [`runtime_rtc_smolvla_h100_baseline.json`](runtime_rtc_smolvla_h100_baseline.json)
+- [`rtc_nsight_systems_summary.json`](rtc_nsight_systems_summary.json)

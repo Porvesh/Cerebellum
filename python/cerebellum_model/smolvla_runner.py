@@ -8,6 +8,7 @@ version is pinned in requirements-smolvla.txt and checked at load time.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -47,6 +48,11 @@ class SmolVLARunner:
         self.policy.config.rtc_config = RtcRuntimeConfig()
         self.policy.model.rtc_processor = RtcProcessor(torch_module)
         self.last_timing: ForwardTiming | None = None
+
+    def _nvtx(self, name: str) -> Any:
+        if self.policy.config.device.startswith("cuda") and self.torch.cuda.is_available():
+            return self.torch.cuda.nvtx.range(name)
+        return nullcontext()
 
     @classmethod
     def from_pretrained(
@@ -150,25 +156,30 @@ class SmolVLARunner:
         raw.update({name: torch.from_numpy(image) for name, image in observation.images.items()})
 
         t0 = monotonic_ns()
-        batch = self.preprocessor(raw)
+        with self._nvtx("cerebellum/preprocess"):
+            batch = self.preprocessor(raw)
         t1 = monotonic_ns()
 
-        batch = self.policy._prepare_batch(batch)
-        images, image_masks = self.policy.prepare_images(batch)
-        state = self.policy.prepare_state(batch)
+        with self._nvtx("smolvla/prepare_batch"):
+            batch = self.policy._prepare_batch(batch)
+        with self._nvtx("smolvla/prepare_images"):
+            images, image_masks = self.policy.prepare_images(batch)
+        with self._nvtx("smolvla/prepare_state"):
+            state = self.policy.prepare_state(batch)
         language_tokens = batch["observation.language.tokens"]
         language_masks = batch["observation.language.attention_mask"]
 
-        generator = torch.Generator(device=self.policy.config.device)
-        generator.manual_seed(seed)
-        noise = torch.randn(
-            1,
-            self.chunk_size,
-            self.model_action_dim,
-            generator=generator,
-            device=self.policy.config.device,
-            dtype=state.dtype,
-        )
+        with self._nvtx("smolvla/noise_creation"):
+            generator = torch.Generator(device=self.policy.config.device)
+            generator.manual_seed(seed)
+            noise = torch.randn(
+                1,
+                self.chunk_size,
+                self.model_action_dim,
+                generator=generator,
+                device=self.policy.config.device,
+                dtype=state.dtype,
+            )
 
         rtc_kwargs: dict[str, Any] = {}
         if request.rtc is not None:
@@ -181,27 +192,37 @@ class SmolVLARunner:
             }
         context = torch.enable_grad() if request.rtc is not None else torch.inference_mode()
         with context:
-            model_actions = self.policy.model.sample_actions(
-                images,
-                image_masks,
-                language_tokens,
-                language_masks,
-                state,
-                noise=noise,
-                **rtc_kwargs,
-            )
+            with self._nvtx(
+                "smolvla/sample_actions_rtc"
+                if request.rtc is not None
+                else "smolvla/sample_actions_base"
+            ):
+                model_actions = self.policy.model.sample_actions(
+                    images,
+                    image_masks,
+                    language_tokens,
+                    language_masks,
+                    state,
+                    noise=noise,
+                    **rtc_kwargs,
+                )
         if self.policy.config.device.startswith("cuda"):
             torch.cuda.synchronize()
         t2 = monotonic_ns()
 
-        robot_actions = model_actions[:, :, : self.robot_action_dim]
-        robot_actions = self.postprocessor(robot_actions[0])
+        with self._nvtx("cerebellum/postprocess"):
+            robot_actions = model_actions[:, :, : self.robot_action_dim]
+            robot_actions = self.postprocessor(robot_actions[0])
         t3 = monotonic_ns()
         self.last_timing = ForwardTiming(t1 - t0, t2 - t1, t3 - t2)
+
+        with self._nvtx("cerebellum/device_to_host"):
+            model_numpy = model_actions[0].detach().float().cpu().numpy()
+            robot_numpy = robot_actions.detach().float().cpu().numpy()
 
         return ActionChunkResult(
             first_step=request.first_step,
             observation_sequence=observation.sequence,
-            model_actions=model_actions[0].detach().float().cpu().numpy(),
-            robot_actions=robot_actions.detach().float().cpu().numpy(),
+            model_actions=model_numpy,
+            robot_actions=robot_numpy,
         )

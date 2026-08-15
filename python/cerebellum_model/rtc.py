@@ -6,6 +6,7 @@ processor is not used, which keeps the bridge contract and guidance testable her
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -51,6 +52,11 @@ class RtcProcessor:
     def track(self, **_: Any) -> None:
         return None
 
+    def _nvtx(self, name: str, tensor: Any) -> Any:
+        if tensor.is_cuda:
+            return self.torch.cuda.nvtx.range(name)
+        return nullcontext()
+
     def denoise_step(
         self,
         x_t: Any,
@@ -75,33 +81,36 @@ class RtcProcessor:
             prefix = prefix.unsqueeze(0)
         horizon = min(int(execution_horizon), int(prefix.shape[1]))
 
-        padded = torch.zeros_like(latent)
-        steps = min(int(prefix.shape[1]), int(latent.shape[1]))
-        dims = min(int(prefix.shape[2]), int(latent.shape[2]))
-        padded[:, :steps, :dims] = prefix[:, :steps, :dims].to(
-            device=latent.device, dtype=latent.dtype
-        )
-        weights = torch.as_tensor(
-            prefix_weights(int(inference_delay), horizon, int(latent.shape[1])),
-            device=latent.device,
-            dtype=latent.dtype,
-        )[None, :, None]
+        with self._nvtx("rtc/prepare_guidance", latent):
+            padded = torch.zeros_like(latent)
+            steps = min(int(prefix.shape[1]), int(latent.shape[1]))
+            dims = min(int(prefix.shape[2]), int(latent.shape[2]))
+            padded[:, :steps, :dims] = prefix[:, :steps, :dims].to(
+                device=latent.device, dtype=latent.dtype
+            )
+            weights = torch.as_tensor(
+                prefix_weights(int(inference_delay), horizon, int(latent.shape[1])),
+                device=latent.device,
+                dtype=latent.dtype,
+            )[None, :, None]
 
         # x must require grad before the denoiser call: RTC needs the full VJP
         # through x_1(x_t), including the denoiser Jacobian.
         with torch.enable_grad():
             latent.requires_grad_(True)
-            velocity = original_denoise_step_partial(latent)
-            predicted_clean = latent - torch.as_tensor(
-                time, device=latent.device, dtype=latent.dtype
-            ) * velocity
-            error = (padded - predicted_clean) * weights
-            correction = torch.autograd.grad(
-                predicted_clean,
-                latent,
-                grad_outputs=error.detach(),
-                retain_graph=False,
-            )[0]
+            with self._nvtx("rtc/base_denoiser", latent):
+                velocity = original_denoise_step_partial(latent)
+            with self._nvtx("rtc/vjp", latent):
+                predicted_clean = latent - torch.as_tensor(
+                    time, device=latent.device, dtype=latent.dtype
+                ) * velocity
+                error = (padded - predicted_clean) * weights
+                correction = torch.autograd.grad(
+                    predicted_clean,
+                    latent,
+                    grad_outputs=error.detach(),
+                    retain_graph=False,
+                )[0]
 
         tau = 1.0 - torch.as_tensor(time, device=latent.device, dtype=latent.dtype)
         one_minus_tau_sq = (1.0 - tau) ** 2
@@ -113,5 +122,6 @@ class RtcProcessor:
         guidance = torch.minimum(
             torch.nan_to_num(c * inv_r2, posinf=self.max_guidance_weight), cap
         )
-        result = velocity - guidance * correction
+        with self._nvtx("rtc/apply_correction", latent):
+            result = velocity - guidance * correction
         return result.squeeze(0) if squeezed else result
