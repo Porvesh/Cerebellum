@@ -127,6 +127,13 @@ static void test_defaults_are_valid() {
 }
 
 static void test_validation_rejects_unusable_configs() {
+    {
+        RuntimeConfig cfg{};
+        cfg.stitching = Stitching::Rtc;
+        cfg.refresh_policy = RefreshPolicy::Horizon;
+        cfg.rtc.denoise_steps = 0;
+        CHECK_THROWS(cfg.validate());
+    }
     {  // R >= H re-infers before the previous chunk produced anything.
         RuntimeConfig cfg{};
         cfg.chunk_size = 10;

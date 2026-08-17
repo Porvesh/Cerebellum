@@ -151,6 +151,8 @@ PythonChunkGenerator::PythonChunkGenerator(const RuntimeConfig &config,
         options_.model,
         "--device",
         options_.device,
+        "--rtc-denoise-steps",
+        std::to_string(config_.rtc.denoise_steps),
     };
     if (options_.local_files_only) arguments.emplace_back("--local-files-only");
     std::vector<char *> argv;

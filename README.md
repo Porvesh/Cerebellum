@@ -144,6 +144,18 @@ CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
 # RTC: start after s-d actions and inpaint actions committed during inference
 ./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
   --ticks 300 --refresh-trigger 6 --stitching rtc --refresh-policy horizon
+
+# Compare RTC guidance cost and committed-prefix agreement at 5/6/8/10 steps.
+# CUDA_VISIBLE_DEVICES maps physical GPU 3 to logical cuda:0 in this process.
+CUDA_VISIBLE_DEVICES=3 PYTHONPATH=python conda run -n cerebellum \
+  python -m cerebellum_model.rtc_sweep --device cuda --physical-gpu 3 \
+  --steps 5 6 8 10 --warmup 1 --iterations 10 \
+  --output results/rtc_denoise_sweep_gpu3.json
+
+# Run the winning setting through the complete C++ two-loop runtime.
+CUDA_VISIBLE_DEVICES=3 ./build/bench_runtime --runner smolvla --device cuda \
+  --stitching rtc --refresh-policy horizon --rtc-denoise-steps 5 \
+  --warmup-inferences 2 --ticks 300 --refresh-trigger 6
 ```
 
 This report covers all action emissions, including fallbacks, and separately reports action

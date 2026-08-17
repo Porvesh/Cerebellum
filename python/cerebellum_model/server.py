@@ -52,6 +52,7 @@ def _make_runner(args: argparse.Namespace) -> tuple[Any, RunnerSpec, bool]:
         args.model,
         device=args.device,
         local_files_only=args.local_files_only,
+        rtc_denoise_steps=args.rtc_denoise_steps,
     )
     images = tuple(
         WireImageSpec(name, shape[0], shape[1], shape[2])
@@ -203,6 +204,7 @@ def main() -> None:
     parser.add_argument("--robot-dim", type=int, default=6)
     parser.add_argument("--model", default="lerobot/smolvla_base")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--rtc-denoise-steps", type=int, default=10)
     parser.add_argument("--local-files-only", action="store_true")
     args = parser.parse_args()
     try:

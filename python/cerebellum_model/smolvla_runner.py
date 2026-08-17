@@ -39,11 +39,15 @@ class SmolVLARunner:
         preprocessor: Any,
         postprocessor: Any,
         torch_module: Any,
+        rtc_denoise_steps: int = 10,
     ) -> None:
+        if rtc_denoise_steps <= 0:
+            raise ValueError("rtc_denoise_steps must be positive")
         self.policy = policy
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
         self.torch = torch_module
+        self.rtc_denoise_steps = rtc_denoise_steps
         # Enable SmolVLA's RTC call site, but install Cerebellum's processor.
         self.policy.config.rtc_config = RtcRuntimeConfig()
         self.policy.model.rtc_processor = RtcProcessor(torch_module)
@@ -61,6 +65,7 @@ class SmolVLARunner:
         *,
         device: str = "cuda",
         local_files_only: bool = False,
+        rtc_denoise_steps: int = 10,
     ) -> "SmolVLARunner":
         installed = version("lerobot")
         if installed != SUPPORTED_LEROBOT_VERSION:
@@ -98,6 +103,7 @@ class SmolVLARunner:
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             torch_module=torch,
+            rtc_denoise_steps=rtc_denoise_steps,
         )
 
     @property
@@ -191,21 +197,27 @@ class SmolVLARunner:
                 "execution_horizon": request.rtc.execution_horizon,
             }
         context = torch.enable_grad() if request.rtc is not None else torch.inference_mode()
-        with context:
-            with self._nvtx(
-                "smolvla/sample_actions_rtc"
-                if request.rtc is not None
-                else "smolvla/sample_actions_base"
-            ):
-                model_actions = self.policy.model.sample_actions(
-                    images,
-                    image_masks,
-                    language_tokens,
-                    language_masks,
-                    state,
-                    noise=noise,
-                    **rtc_kwargs,
-                )
+        configured_steps = self.policy.model.config.num_steps
+        if request.stitching == "rtc":
+            self.policy.model.config.num_steps = self.rtc_denoise_steps
+        try:
+            with context:
+                with self._nvtx(
+                    "smolvla/sample_actions_rtc"
+                    if request.rtc is not None
+                    else "smolvla/sample_actions_base"
+                ):
+                    model_actions = self.policy.model.sample_actions(
+                        images,
+                        image_masks,
+                        language_tokens,
+                        language_masks,
+                        state,
+                        noise=noise,
+                        **rtc_kwargs,
+                    )
+        finally:
+            self.policy.model.config.num_steps = configured_steps
         if self.policy.config.device.startswith("cuda"):
             torch.cuda.synchronize()
         t2 = monotonic_ns()

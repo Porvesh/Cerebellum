@@ -81,6 +81,7 @@ struct RtcConfig {
     // one emitted action leaves six committed actions, matching s >= d.
     int execution_horizon = 6;
     int inference_delay = steps_for(kBudgetTargetMs);
+    int denoise_steps = kDenoiseSteps;
 };
 
 struct RuntimeConfig {

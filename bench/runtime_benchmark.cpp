@@ -27,6 +27,7 @@ struct Arguments {
     int ticks = 300;
     int warmup_inferences = 2;
     int refresh_trigger = 6;
+    int rtc_denoise_steps = kDenoiseSteps;
     double synthetic_inference_ms = 149.0;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     Stitching stitching = Stitching::Discard;
@@ -59,6 +60,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.warmup_inferences = std::stoi(std::string(value(arg)));
         } else if (arg == "--refresh-trigger") {
             args.refresh_trigger = std::stoi(std::string(value(arg)));
+        } else if (arg == "--rtc-denoise-steps") {
+            args.rtc_denoise_steps = std::stoi(std::string(value(arg)));
         } else if (arg == "--refresh-policy") {
             const std::string_view name = value(arg);
             if (name == "tail")
@@ -95,6 +98,9 @@ Arguments parse_arguments(int argc, char **argv) {
     }
     if (args.refresh_trigger <= 0 || args.refresh_trigger >= kChunkSize) {
         throw std::invalid_argument("refresh trigger must be between 1 and chunk_size - 1");
+    }
+    if (args.rtc_denoise_steps <= 0) {
+        throw std::invalid_argument("RTC denoise steps must be positive");
     }
     return args;
 }
@@ -230,6 +236,7 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop, Countin
         << "  \"staleness_bound_ms\": " << kMaxStalenessMs << ",\n"
         << "  \"chunk_size\": " << kChunkSize << ",\n"
         << "  \"refresh_trigger\": " << args.refresh_trigger << ",\n"
+        << "  \"rtc_denoise_steps\": " << args.rtc_denoise_steps << ",\n"
         << "  \"warmup_inferences\": ";
     if (args.runner == PythonRunner::SmolVla)
         out << args.warmup_inferences;
@@ -297,6 +304,7 @@ int main(int argc, char **argv) {
         config.stitching = args.stitching;
         config.refresh_policy = args.refresh_policy;
         config.refresh_trigger = args.refresh_trigger;
+        config.rtc.denoise_steps = args.rtc_denoise_steps;
         config.queue_capacity = config.chunk_size + config.refresh_trigger;
         config.validate();
 

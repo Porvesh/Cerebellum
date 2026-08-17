@@ -1,0 +1,44 @@
+{
+  "runner": "smolvla",
+  "device": "cuda",
+  "physical_gpu": 3,
+  "seed": 11,
+  "warmup": 1,
+  "iterations": 10,
+  "inference_delay": 5,
+  "execution_horizon": 6,
+  "results": [
+    {
+      "denoise_steps": 5,
+      "latency_ms": {"p50": 196.320555, "p90": 204.0928619, "p99": 207.64829939, "max": 208.043348},
+      "baseline_prefix_mse": 0.005503518972545862,
+      "guided_prefix_mse": 0.0014861110830679536,
+      "guided_to_baseline_mse_ratio": 0.27002924682941476,
+      "peak_allocated_mib": 1027.73193359375
+    },
+    {
+      "denoise_steps": 6,
+      "latency_ms": {"p50": 274.5350135, "p90": 283.35914959999997, "p99": 284.41825376, "max": 284.535932},
+      "baseline_prefix_mse": 0.005730236880481243,
+      "guided_prefix_mse": 0.0011219475418329239,
+      "guided_to_baseline_mse_ratio": 0.1957942691085921,
+      "peak_allocated_mib": 1027.73828125
+    },
+    {
+      "denoise_steps": 8,
+      "latency_ms": {"p50": 350.9435215, "p90": 364.778635, "p99": 367.1588038, "max": 367.423267},
+      "baseline_prefix_mse": 0.005918264389038086,
+      "guided_prefix_mse": 0.0009244885295629501,
+      "guided_to_baseline_mse_ratio": 0.15620940005237077,
+      "peak_allocated_mib": 1027.7509765625
+    },
+    {
+      "denoise_steps": 10,
+      "latency_ms": {"p50": 451.953534, "p90": 457.1221383, "p99": 463.98054033, "max": 464.742585},
+      "baseline_prefix_mse": 0.006073256488889456,
+      "guided_prefix_mse": 0.0008204499026760459,
+      "guided_to_baseline_mse_ratio": 0.13509225308975412,
+      "peak_allocated_mib": 1027.763671875
+    }
+  ]
+}

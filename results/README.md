@@ -113,3 +113,31 @@ five-step RTC setting and a 5/6/8/10-step quality/latency sweep.
 
 - [`runtime_rtc_smolvla_h100_baseline.json`](runtime_rtc_smolvla_h100_baseline.json)
 - [`rtc_nsight_systems_summary.json`](rtc_nsight_systems_summary.json)
+
+## RTC denoising-step sweep on GPU 3
+
+A controlled run on an otherwise idle physical GPU 3 loaded SmolVLA once and
+measured the same observation, noise seed, and committed prefix at 5, 6, 8, and
+10 denoising steps. Each setting had one warm-up and ten measured conditioned
+requests. Prefix MSE compares the generated committed region with the retained
+actions it was asked to preserve; the ratio is relative to the same unguided
+chunk transition.
+
+| Steps | RTC latency p50 | RTC latency p99 | Guided/baseline prefix MSE | Peak allocation |
+|---:|---:|---:|---:|---:|
+| 5 | 196.32 ms | 207.65 ms | 27.00% | 1027.73 MiB |
+| 6 | 274.54 ms | 284.42 ms | 19.58% | 1027.74 MiB |
+| 8 | 350.94 ms | 367.16 ms | 15.62% | 1027.75 MiB |
+| 10 | 451.95 ms | 463.98 ms | 13.51% | 1027.76 MiB |
+
+Five steps is the latency winner and still reduces prefix error by about 73%
+relative to no RTC guidance. In the complete 300-tick C++ runtime, five steps
+also beat six: p50 staleness was 366.61 ms versus 433.18 ms, with 173/298 versus
+220/297 real actions exceeding the 350 ms bound. This is an improvement, not a
+pass: the five-step worker remained 93.28% busy and still violated the bound on
+58.05% of real actions. The next optimization must address refresh cadence and
+end-to-end freshness while checking real action quality.
+
+- [`rtc_denoise_sweep_gpu3.json`](rtc_denoise_sweep_gpu3.json)
+- [`runtime_rtc_steps5_gpu3.json`](runtime_rtc_steps5_gpu3.json)
+- [`runtime_rtc_steps6_gpu3.json`](runtime_rtc_steps6_gpu3.json)

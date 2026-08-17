@@ -57,6 +57,7 @@ inline void check_horizons(int inference_delay, int execution_horizon, int chunk
 inline void RuntimeConfig::validate() const {
     if (chunk_size <= 0) throw std::invalid_argument("chunk_size must be positive");
     if (action_dim <= 0) throw std::invalid_argument("action_dim must be positive");
+    if (denoise_steps <= 0) throw std::invalid_argument("denoise_steps must be positive");
     if (refresh_trigger < 0) {
         throw std::invalid_argument("refresh_trigger must be non-negative");
     }
@@ -99,6 +100,9 @@ inline void RuntimeConfig::validate() const {
     }
 
     if (stitching == Stitching::Rtc) {
+        if (rtc.denoise_steps <= 0) {
+            throw std::invalid_argument("RTC denoise_steps must be positive");
+        }
         if (refresh_policy != RefreshPolicy::Horizon) {
             throw std::invalid_argument(
                 "Stitching::Rtc requires RefreshPolicy::Horizon so inference starts "
