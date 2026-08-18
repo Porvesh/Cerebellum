@@ -60,6 +60,10 @@ add_executable(test_observation tests/test_observation.cpp)
 target_link_libraries(test_observation PRIVATE cerebellum_core)
 add_test(NAME observation COMMAND test_observation)
 
+add_executable(test_replay tests/test_replay.cpp)
+target_link_libraries(test_replay PRIVATE cerebellum_core Threads::Threads)
+add_test(NAME replay COMMAND test_replay)
+
 add_executable(test_python_chunk_generator tests/test_python_chunk_generator.cpp)
 target_link_libraries(test_python_chunk_generator PRIVATE cerebellum_python_bridge)
 target_compile_definitions(test_python_chunk_generator PRIVATE
@@ -79,4 +83,6 @@ if(CEREBELLUM_TSAN)
     target_link_options(test_chunk_queue_mt PRIVATE -fsanitize=thread)
     target_compile_options(test_loop PRIVATE -fsanitize=thread -g -O1)
     target_link_options(test_loop PRIVATE -fsanitize=thread)
+    target_compile_options(test_replay PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(test_replay PRIVATE -fsanitize=thread)
 endif()

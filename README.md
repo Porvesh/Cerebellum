@@ -181,6 +181,25 @@ PYTHONPATH=python conda run -n cerebellum \
 Use `--device cpu` when no GPU has enough free memory. Install the pinned optional dependencies
 without sudo using `python/requirements-smolvla.txt`.
 
+## Offline replay
+
+`ReplayObservationSource` runs prerecorded observations through the same newest-wins
+`ObservationSource` contract used by a live deployment. Frames carry offsets from the beginning
+of an episode; `start()` rebases their capture stamps onto the current monotonic clock, and the
+inference worker receives the newest frame whose offset has elapsed. Recorded steady-clock epochs
+are deliberately ignored because they are meaningless in another process or machine.
+
+`ReplayActionSink` reserves its complete output capacity before control starts. It records actions
+without allocating or performing file I/O on the control thread; after the loop stops,
+`write_replay_actions_csv()` writes steps, relative deadlines, emission times, fallback flags, and
+action values. Dataset decoding is intentionally outside the real-time core: an adapter loads an
+episode into `std::vector<ReplayObservationFrame>`, then the existing `RuntimeLoop` and either the
+synthetic or SmolVLA `ChunkGenerator` execute it unchanged.
+
+The dependency-free `replay` test exercises timestamp rebasing, newest-frame selection, bounded
+recording, CSV output, and a complete replay through the asynchronous inference and control loops.
+No GPU is required for this test.
+
 See [`spec.md`](spec.md) for the problem statement, latency budget, invariants, measurement
 methodology, and phased plan. Performance numbers in the spec remain targets until the benchmark
 tables and sweeps are committed.
