@@ -28,6 +28,8 @@ struct Arguments {
     int warmup_inferences = 2;
     int refresh_trigger = 6;
     int rtc_denoise_steps = kDenoiseSteps;
+    int rtc_inference_delay = RtcConfig{}.inference_delay;
+    int rtc_execution_horizon = RtcConfig{}.execution_horizon;
     double synthetic_inference_ms = 149.0;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     Stitching stitching = Stitching::Discard;
@@ -62,6 +64,10 @@ Arguments parse_arguments(int argc, char **argv) {
             args.refresh_trigger = std::stoi(std::string(value(arg)));
         } else if (arg == "--rtc-denoise-steps") {
             args.rtc_denoise_steps = std::stoi(std::string(value(arg)));
+        } else if (arg == "--rtc-inference-delay") {
+            args.rtc_inference_delay = std::stoi(std::string(value(arg)));
+        } else if (arg == "--rtc-execution-horizon") {
+            args.rtc_execution_horizon = std::stoi(std::string(value(arg)));
         } else if (arg == "--refresh-policy") {
             const std::string_view name = value(arg);
             if (name == "tail")
@@ -102,6 +108,7 @@ Arguments parse_arguments(int argc, char **argv) {
     if (args.rtc_denoise_steps <= 0) {
         throw std::invalid_argument("RTC denoise steps must be positive");
     }
+    check_horizons(args.rtc_inference_delay, args.rtc_execution_horizon, kChunkSize);
     return args;
 }
 
@@ -237,6 +244,14 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop, Countin
         << "  \"chunk_size\": " << kChunkSize << ",\n"
         << "  \"refresh_trigger\": " << args.refresh_trigger << ",\n"
         << "  \"rtc_denoise_steps\": " << args.rtc_denoise_steps << ",\n"
+        << "  \"rtc_timing\": {\n"
+        << "    \"configured_inference_delay\": " << args.rtc_inference_delay << ",\n"
+        << "    \"configured_execution_horizon\": " << args.rtc_execution_horizon << ",\n"
+        << "    \"configured_refresh_gap\": "
+        << args.rtc_execution_horizon - args.rtc_inference_delay << ",\n"
+        << "    \"final_inference_delay\": " << loop.queue().inference_delay() << ",\n"
+        << "    \"final_execution_horizon\": " << loop.queue().execution_horizon() << "\n"
+        << "  },\n"
         << "  \"warmup_inferences\": ";
     if (args.runner == PythonRunner::SmolVla)
         out << args.warmup_inferences;
@@ -305,6 +320,8 @@ int main(int argc, char **argv) {
         config.refresh_policy = args.refresh_policy;
         config.refresh_trigger = args.refresh_trigger;
         config.rtc.denoise_steps = args.rtc_denoise_steps;
+        config.rtc.inference_delay = args.rtc_inference_delay;
+        config.rtc.execution_horizon = args.rtc_execution_horizon;
         config.queue_capacity = config.chunk_size + config.refresh_trigger;
         config.validate();
 

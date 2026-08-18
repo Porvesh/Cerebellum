@@ -1,0 +1,60 @@
+{
+  "runner": "smolvla",
+  "stitching": "rtc",
+  "refresh_policy": "horizon",
+  "device": "cuda",
+  "ticks_requested": 300,
+  "control_hz": 30,
+  "staleness_bound_ms": 350.000000,
+  "chunk_size": 50,
+  "refresh_trigger": 6,
+  "rtc_denoise_steps": 5,
+  "rtc_timing": {
+    "configured_inference_delay": 6,
+    "configured_execution_horizon": 10,
+    "configured_refresh_gap": 4,
+    "final_inference_delay": 8,
+    "final_execution_horizon": 12
+  },
+  "warmup_inferences": 2,
+  "synthetic_inference_ms": null,
+  "wall_time_ms": 10000.365813,
+  "timing_ms": {
+    "action_emit_lateness": {"min": 0.072700, "p50": 0.102846, "p90": 0.107005, "p99": 0.110843, "max": 0.147025},
+    "observation_to_action_staleness": {"min": 100.013448, "p50": 399.963710, "p90": 566.565143, "p99": 599.957836, "max": 600.012088},
+    "chunk_ready_to_action_emit": {"min": 0.170604, "p50": 174.550145, "p90": 331.475406, "p99": 366.267110, "max": 366.602467}
+  },
+  "action_metrics": {
+    "discard_seam_linf": {"min": 0.063278, "p50": 0.140604, "p90": 0.146658, "p99": 0.185282, "max": 0.185282}
+  },
+  "counts": {
+    "ticks": 300,
+    "strict_deadline_misses": 300,
+    "real_actions": 298,
+    "fallback_actions": 2,
+    "underruns": 2,
+    "staleness_violations": 199,
+    "steps_skipped": 0,
+    "inference_requests": 29,
+    "chunks_generated": 29,
+    "generation_failures": 0,
+    "invalid_chunks": 0,
+    "publish_retries": 0,
+    "rtc_inference_overruns": 0,
+    "chunks_published": 29,
+    "publish_failures": 0,
+    "acquire_failures": 0,
+    "chunks_accepted": 29,
+    "chunks_superseded": 0,
+    "actions_discarded": 190
+  },
+  "inference_load": {
+    "generation_wall_ms": 6684.287432,
+    "generated_per_second": 2.899894,
+    "worker_busy_percent": 66.840429
+  },
+  "rates_percent": {
+    "underrun": 0.666667,
+    "staleness_violation_of_real_actions": 66.778523
+  }
+}

@@ -77,8 +77,9 @@ enum class Stitching { Discard, Ensemble, Rtc };
 enum class RefreshPolicy { Tail, Continuous, Horizon };
 
 struct RtcConfig {
-    // Measured SmolVLA takes five 30 Hz ticks. Starting the next inference after
-    // one emitted action leaves six committed actions, matching s >= d.
+    // Provisional startup floor inherited from the ordinary forward budget;
+    // the runtime raises d from measured RTC latency. Benchmarks override these
+    // for a selected denoising count (five-step RTC measured d=s=8).
     int execution_horizon = 6;
     int inference_delay = steps_for(kBudgetTargetMs);
     int denoise_steps = kDenoiseSteps;

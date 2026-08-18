@@ -96,7 +96,7 @@ class ActionChunkQueue {
           refresh_trigger_(cfg.refresh_trigger),
           stitching_(cfg.stitching),
           refresh_policy_(cfg.refresh_policy),
-          base_execution_horizon_(cfg.rtc.execution_horizon),
+          rtc_refresh_gap_(cfg.rtc.execution_horizon - cfg.rtc.inference_delay),
           inference_delay_(cfg.rtc.inference_delay),
           execution_horizon_(cfg.rtc.execution_horizon),
           pool_(kChunkSlots),
@@ -163,7 +163,12 @@ class ActionChunkQueue {
 
     void update_rtc_timing(int measured_delay) noexcept {
         const int delay = std::max(1, std::min(measured_delay, chunk_size_));
-        const int horizon = std::min(chunk_size_, std::max(base_execution_horizon_, delay + 1));
+        // Preserve the configured s-d scheduling decision when the latency
+        // estimator changes d. Keeping a fixed absolute s silently collapsed
+        // every slower measurement to a one-action gap, making horizon tuning
+        // ineffective. s == d is valid RTC and means refresh at the first
+        // control emission that accepts the previous result.
+        const int horizon = std::min(chunk_size_, delay + rtc_refresh_gap_);
         inference_delay_.store(delay, std::memory_order_relaxed);
         execution_horizon_.store(horizon, std::memory_order_relaxed);
     }
@@ -361,7 +366,7 @@ class ActionChunkQueue {
     const int refresh_trigger_;
     const Stitching stitching_;
     const RefreshPolicy refresh_policy_;
-    const int base_execution_horizon_;
+    const int rtc_refresh_gap_;
     std::atomic<int> inference_delay_;
     std::atomic<int> execution_horizon_;
 

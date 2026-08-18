@@ -65,7 +65,7 @@ static RuntimeConfig cfg_with(Stitching s) {
     cfg.stitching = s;
     if (s == Stitching::Rtc) {
         cfg.refresh_policy = RefreshPolicy::Horizon;
-        cfg.rtc.execution_horizon = 5;
+        cfg.rtc.execution_horizon = cfg.rtc.inference_delay;
     }
     cfg.validate();
     return cfg;
@@ -157,6 +157,35 @@ static void test_continuous_refresh_starts_after_each_accept() {
     CHECK(q.pop(0, sched.deadline(0), a, rec));
     CHECK(q.remaining() == kChunkSize - 1);
     CHECK(q.should_refresh());  // do not wait for the tail trigger
+}
+
+static void test_rtc_preserves_configured_refresh_gap() {
+    RuntimeConfig zero_gap = cfg_with(Stitching::Rtc);
+    zero_gap.rtc.execution_horizon = zero_gap.rtc.inference_delay;
+    ActionChunkQueue earliest(zero_gap);
+    earliest.update_rtc_timing(8);
+    CHECK(earliest.inference_delay() == 8);
+    CHECK(earliest.execution_horizon() == 8);
+
+    RuntimeConfig cfg = cfg_with(Stitching::Rtc);
+    cfg.rtc.inference_delay = 5;
+    cfg.rtc.execution_horizon = 7;  // start after s-d = two actions
+    ActionChunkQueue q(cfg);
+    ScheduleClock sched(now());
+    Action a{};
+    ActionRecord rec;
+
+    // A slower measurement moves d and s together; the two-action scheduling
+    // gap remains a deliberate configuration rather than collapsing to one.
+    q.update_rtc_timing(8);
+    CHECK(q.inference_delay() == 8);
+    CHECK(q.execution_horizon() == 10);
+
+    CHECK(q.publish(fill(q, 0, kChunkSize, 1.0f)));
+    CHECK(q.pop(0, sched.deadline(0), a, rec));
+    CHECK(!q.should_refresh());
+    CHECK(q.pop(1, sched.deadline(1), a, rec));
+    CHECK(q.should_refresh());
 }
 
 // --- §4.3, discard ----------------------------------------------------------
@@ -349,6 +378,7 @@ int main() {
     test_underrun_on_empty_queue();
     test_refresh_trigger();
     test_continuous_refresh_starts_after_each_accept();
+    test_rtc_preserves_configured_refresh_gap();
     test_discard_skips_the_stale_prefix();
     test_ensemble_blends_the_overlap();
     test_ensemble_releases_the_old_chunk();

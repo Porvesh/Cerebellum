@@ -1,0 +1,16 @@
+{
+  "runner": "smolvla",
+  "physical_gpu": 3,
+  "rtc_denoise_steps": 5,
+  "ticks": 300,
+  "control_hz": 30,
+  "staleness_bound_ms": 350.0,
+  "results": [
+    {"configured_d": 6, "configured_s": 6, "gap": 0, "final_d": 8, "final_s": 8, "staleness_p50_ms": 366.560407, "staleness_p99_ms": 499.961228, "violations": 167, "real_actions": 298, "underruns": 2, "worker_busy_percent": 92.417680},
+    {"configured_d": 6, "configured_s": 7, "gap": 1, "final_d": 8, "final_s": 9, "staleness_p50_ms": 366.619918, "staleness_p99_ms": 499.964529, "violations": 175, "real_actions": 298, "underruns": 2, "worker_busy_percent": 90.440218},
+    {"configured_d": 6, "configured_s": 8, "gap": 2, "final_d": 8, "final_s": 10, "staleness_p50_ms": 399.878820, "staleness_p99_ms": 533.304172, "violations": 187, "real_actions": 298, "underruns": 2, "worker_busy_percent": 80.935947},
+    {"configured_d": 6, "configured_s": 10, "gap": 4, "final_d": 8, "final_s": 12, "staleness_p50_ms": 399.963710, "staleness_p99_ms": 599.957836, "violations": 199, "real_actions": 298, "underruns": 2, "worker_busy_percent": 66.840429},
+    {"configured_d": 7, "configured_s": 7, "gap": 0, "final_d": 8, "final_s": 8, "staleness_p50_ms": 366.511247, "staleness_p99_ms": 499.944878, "violations": 153, "real_actions": 298, "underruns": 2, "worker_busy_percent": 94.084500},
+    {"configured_d": 8, "configured_s": 8, "gap": 0, "final_d": 8, "final_s": 8, "staleness_p50_ms": 366.611348, "staleness_p99_ms": 499.983429, "violations": 170, "real_actions": 298, "underruns": 2, "worker_busy_percent": 91.937195}
+  ]
+}

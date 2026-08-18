@@ -155,6 +155,7 @@ CUDA_VISIBLE_DEVICES=3 PYTHONPATH=python conda run -n cerebellum \
 # Run the winning setting through the complete C++ two-loop runtime.
 CUDA_VISIBLE_DEVICES=3 ./build/bench_runtime --runner smolvla --device cuda \
   --stitching rtc --refresh-policy horizon --rtc-denoise-steps 5 \
+  --rtc-inference-delay 8 --rtc-execution-horizon 8 \
   --warmup-inferences 2 --ticks 300 --refresh-trigger 6
 ```
 

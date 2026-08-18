@@ -141,3 +141,44 @@ end-to-end freshness while checking real action quality.
 - [`rtc_denoise_sweep_gpu3.json`](rtc_denoise_sweep_gpu3.json)
 - [`runtime_rtc_steps5_gpu3.json`](runtime_rtc_steps5_gpu3.json)
 - [`runtime_rtc_steps6_gpu3.json`](runtime_rtc_steps6_gpu3.json)
+
+## RTC scheduler sweep on GPU 3
+
+The complete C++ two-loop runtime then swept the paper's timing variables with
+five denoising steps. Here `d` is the conservative inference delay, `s` is the
+execution horizon, and `s-d` is how many actions the scheduler waits after
+accepting a chunk before requesting its replacement. Every run used 300 ticks
+at 30 Hz on isolated physical GPU 3. The latency estimator was active rather
+than artificially fixed.
+
+| Configured d/s | Gap | Final d/s | Staleness p50 | Staleness p99 | Violations | Worker busy |
+|---:|---:|---:|---:|---:|---:|---:|
+| 6/6 | 0 | 8/8 | 366.56 ms | 499.96 ms | 167/298 (56.04%) | 92.42% |
+| 6/7 | 1 | 8/9 | 366.62 ms | 499.96 ms | 175/298 (58.72%) | 90.44% |
+| 6/8 | 2 | 8/10 | 399.88 ms | 533.30 ms | 187/298 (62.75%) | 80.94% |
+| 6/10 | 4 | 8/12 | 399.96 ms | 599.96 ms | 199/298 (66.78%) | 66.84% |
+| 7/7 | 0 | 8/8 | 366.51 ms | 499.94 ms | 153/298 (51.34%) | 94.08% |
+| 8/8 | 0 | 8/8 | 366.61 ms | 499.98 ms | 170/298 (57.05%) | 91.94% |
+
+The violation count moves with request/control phase because many samples land
+on the 333/367 ms bins around the 350 ms threshold; p50 and p99 are the stable
+comparison. All delay floors converged to eight ticks. A zero gap is the best
+schedule and a floor of eight safely describes the measured worst recent
+latency for the five-step candidate, so its benchmark setting is `d=s=8`.
+The general RTC default remains unchanged until the next action-quality check
+decides whether five denoising steps can replace the checkpoint's ten steps.
+
+Scheduling cannot close the remaining gap. A single serial worker spends about
+230–235 ms generating each conditioned chunk. The newest observation is already
+that old when the chunk arrives, and it continues aging while the next serial
+request runs, producing the measured roughly 500 ms p99. Meeting a strict
+350 ms bound needs conditioned generation near 175 ms or overlapping inference;
+waiting longer only saves GPU duty at the cost of freshness.
+
+- [`rtc_scheduler_sweep_gpu3.json`](rtc_scheduler_sweep_gpu3.json)
+- Raw reports: [`d6/s6`](runtime_rtc_d6_s6_gpu3.json),
+  [`d6/s7`](runtime_rtc_d6_s7_gpu3.json),
+  [`d6/s8`](runtime_rtc_d6_s8_gpu3.json),
+  [`d6/s10`](runtime_rtc_d6_s10_gpu3.json),
+  [`d7/s7`](runtime_rtc_d7_s7_gpu3.json), and
+  [`d8/s8`](runtime_rtc_d8_s8_gpu3.json)
