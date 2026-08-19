@@ -182,3 +182,36 @@ waiting longer only saves GPU duty at the cost of freshness.
   [`d6/s10`](runtime_rtc_d6_s10_gpu3.json),
   [`d7/s7`](runtime_rtc_d7_s7_gpu3.json), and
   [`d8/s8`](runtime_rtc_d8_s8_gpu3.json)
+
+## File-backed real SmolVLA replay smoke test
+
+The complete NPZ → CBR → C++ replay → Python SmolVLA → action CSV path ran on
+physical GPU 3 for 60 ticks at 30 Hz. Both runs used the identical generated
+episode: six zero state values, three blank 256×256 RGB cameras, and the task
+`move the object to the target`. The episode intentionally contains no
+reference actions.
+
+| Runtime metric | 5-step RTC (`d=s=8`) | 10-step RTC (`d=s=14`) |
+|---|---:|---:|
+| Real actions | 58 / 60 | 56 / 60 |
+| Cold-start fallbacks | 2 | 4 |
+| Chunks generated | 9 | 6 |
+| Staleness p50 | 333.59 ms | 500.25 ms |
+| Staleness p99 | 500.26 ms | 733.59 ms |
+| Ready-to-emit p99 | 245.53 ms | 379.55 ms |
+| Superseded action prefixes | 47 | 46 |
+
+On the 56 steps where both configurations emitted real actions, their commands
+had MAE 0.0851, RMSE 0.1237, and maximum L-infinity disagreement 0.3784. The
+ten-step output was smoother on this input: mean consecutive-action L2 was
+0.0593 versus 0.0804 for five steps.
+
+These are **pipeline and relative-behavior measurements, not task-quality
+results**. Blank cameras and zero state are out-of-distribution, and there is no
+correct reference trajectory. The run proves that file replay drives real RTC
+and quantifies the operational cost difference. Deciding whether five steps is
+good enough still requires a recorded episode from the target policy/task.
+
+- [`replay_rtc5_blank_gpu3.json`](replay_rtc5_blank_gpu3.json)
+- [`replay_rtc10_blank_gpu3.json`](replay_rtc10_blank_gpu3.json)
+- [`replay_rtc5_vs_rtc10_blank_gpu3.json`](replay_rtc5_vs_rtc10_blank_gpu3.json)

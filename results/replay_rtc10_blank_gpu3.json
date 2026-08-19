@@ -1,0 +1,28 @@
+{
+  "format": "cerebellum-replay-report-v1",
+  "runner": "smolvla",
+  "stitching": "rtc",
+  "device": "cuda",
+  "episode_frames": 60,
+  "reference_action_dim": 0,
+  "control_hz": 30,
+  "rtc_denoise_steps": 10,
+  "rtc_inference_delay": 14,
+  "rtc_execution_horizon": 14,
+  "timing_ms": {
+    "staleness_p50": 500.253975,
+    "staleness_p99": 733.591079,
+    "ready_to_emit_p50": 171.968888,
+    "ready_to_emit_p99": 379.548356
+  },
+  "counts": {
+    "ticks": 60,
+    "recorded_actions": 60,
+    "dropped_records": 0,
+    "underruns": 4,
+    "chunks_generated": 6,
+    "generation_failures": 0,
+    "actions_discarded": 46
+  },
+  "quality": null
+}

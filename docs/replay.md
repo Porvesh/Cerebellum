@@ -76,3 +76,15 @@ The report includes runtime staleness/underruns plus reference-action MAE, RMSE,
 L-infinity error. Fallback commands are counted separately and excluded from model-error averages;
 otherwise a held safety command would be misreported as a model prediction. These open-loop errors
 compare policies on identical input, but they do not prove closed-loop task success.
+
+When an episode has no trustworthy reference actions, two replay outputs can still be compared:
+
+```bash
+PYTHONPATH=python python -m cerebellum_model.replay_compare \
+  --left rtc5-actions.csv --left-label rtc-5-step \
+  --right rtc10-actions.csv --right-label rtc-10-step \
+  --output rtc5-vs-rtc10.json
+```
+
+This reports disagreement on steps where both runs emitted real actions and reports per-run action
+smoothness. It measures how two configurations differ; it cannot say which trajectory is correct.

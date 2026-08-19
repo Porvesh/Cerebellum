@@ -1,0 +1,26 @@
+{
+  "format": "cerebellum-replay-comparison-v1",
+  "left": "rtc-5-step",
+  "right": "rtc-10-step",
+  "action_dim": 6,
+  "paired_nonfallback_actions": 56,
+  "left_fallback_actions": 2,
+  "right_fallback_actions": 4,
+  "disagreement": {
+    "mean_absolute_error": 0.08512641489505768,
+    "root_mean_square_error": 0.12367146462202072,
+    "max_linf_error": 0.37837597727775574
+  },
+  "left_smoothness": {
+    "consecutive_pairs": 57,
+    "mean_step_l2": 0.08035992085933685,
+    "p99_step_linf": 0.11564019322395325,
+    "max_step_linf": 0.11590901017189026
+  },
+  "right_smoothness": {
+    "consecutive_pairs": 55,
+    "mean_step_l2": 0.059283580631017685,
+    "p99_step_linf": 0.08220793306827545,
+    "max_step_linf": 0.0897350013256073
+  }
+}
