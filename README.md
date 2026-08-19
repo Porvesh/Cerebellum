@@ -200,6 +200,19 @@ The dependency-free `replay` test exercises timestamp rebasing, newest-frame sel
 recording, CSV output, and a complete replay through the asynchronous inference and control loops.
 No GPU is required for this test.
 
+Convert a portable NumPy episode and run it through the CPU synthetic worker:
+
+```bash
+PYTHONPATH=python python -m cerebellum_model.replay_export \
+  --input episode.npz --output episode.cbr
+
+./build/bench_replay --episode episode.cbr --runner synthetic --device cpu \
+  --actions-output predicted-actions.csv --report-output replay-report.json
+```
+
+The NPZ contract and binary format are documented in [`docs/replay.md`](docs/replay.md). The same
+`bench_replay` command accepts `--runner smolvla --device cuda`; use that only when a GPU is free.
+
 See [`spec.md`](spec.md) for the problem statement, latency budget, invariants, measurement
 methodology, and phased plan. Performance numbers in the spec remain targets until the benchmark
 tables and sweeps are committed.

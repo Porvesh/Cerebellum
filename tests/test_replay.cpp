@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <stdexcept>
@@ -6,6 +7,7 @@
 #include <vector>
 
 #include "cerebellum/replay.hpp"
+#include "cerebellum/replay_episode.hpp"
 
 using namespace cerebellum;
 
@@ -142,6 +144,87 @@ void test_replay_sink_reports_capacity_exhaustion() {
     CHECK(sink.dropped_records() == 1);
 }
 
+ReplayEpisode episode() {
+    ReplayEpisode value;
+    value.task = "replay the recorded task";
+    value.state_dim = 2;
+    value.action_dim = 2;
+    value.frames = {
+        frame(20, Nanos::zero(), 20),
+        frame(21, std::chrono::milliseconds(33), 21),
+        frame(22, std::chrono::milliseconds(66), 22),
+    };
+    for (int i = 0; i < 3; ++i) {
+        Action action{};
+        action[0] = static_cast<float>(i);
+        action[1] = static_cast<float>(i) + 0.5F;
+        value.reference_actions.push_back(action);
+    }
+    return value;
+}
+
+void test_episode_binary_round_trip() {
+    const ReplayEpisode original = episode();
+    std::stringstream encoded(std::ios::in | std::ios::out | std::ios::binary);
+    write_replay_episode(encoded, original);
+    encoded.seekg(0);
+    const ReplayEpisode decoded = read_replay_episode(encoded);
+
+    CHECK(decoded.task == original.task);
+    CHECK(decoded.state_dim == 2);
+    CHECK(decoded.action_dim == 2);
+    CHECK(decoded.frames.size() == 3);
+    CHECK(decoded.frames[1].offset == std::chrono::milliseconds(33));
+    CHECK(decoded.frames[2].observation.sequence == 22);
+    CHECK(decoded.frames[2].observation.images[0].pixels[0] == 22);
+    CHECK(decoded.reference_actions[2][0] == 2.0F);
+    CHECK(decoded.reference_actions[2][1] == 2.5F);
+}
+
+void test_episode_rejects_corruption_and_schema_changes() {
+    std::stringstream bad_magic(std::ios::in | std::ios::out | std::ios::binary);
+    bad_magic << "not a replay";
+    bad_magic.seekg(0);
+    CHECK_THROWS(read_replay_episode(bad_magic));
+
+    ReplayEpisode changed = episode();
+    changed.frames[1].observation.images[0].width = 2;
+    CHECK_THROWS(changed.validate());
+
+    ReplayEpisode missing_reference = episode();
+    missing_reference.reference_actions.pop_back();
+    CHECK_THROWS(missing_reference.validate());
+}
+
+void test_quality_aligns_absolute_steps_and_excludes_fallbacks() {
+    const ReplayEpisode value = episode();
+    std::vector<ReplayActionRecord> records;
+
+    ActionEmission predicted;
+    predicted.step = 0;
+    predicted.action[0] = 1.0F;
+    predicted.action[1] = 2.5F;
+    records.push_back(ReplayActionRecord{predicted, now()});
+
+    ActionEmission fallback;
+    fallback.step = 1;
+    fallback.fallback = true;
+    records.push_back(ReplayActionRecord{fallback, now()});
+
+    ActionEmission outside;
+    outside.step = 9;
+    records.push_back(ReplayActionRecord{outside, now()});
+
+    const ReplayQualitySummary quality =
+        evaluate_replay_actions(records, value.reference_actions, value.action_dim);
+    CHECK(quality.compared_actions == 1);
+    CHECK(quality.fallback_actions == 1);
+    CHECK(quality.missing_reference_actions == 1);
+    CHECK(std::abs(quality.mean_absolute_error - 1.5) < 1e-9);
+    CHECK(std::abs(quality.root_mean_square_error - std::sqrt(2.5)) < 1e-9);
+    CHECK(std::abs(quality.max_linf_error - 2.0) < 1e-9);
+}
+
 }  // namespace
 
 int main() {
@@ -149,6 +232,9 @@ int main() {
     test_replay_rejects_an_invalid_timeline();
     test_replay_runs_through_the_two_loop_runtime();
     test_replay_sink_reports_capacity_exhaustion();
+    test_episode_binary_round_trip();
+    test_episode_rejects_corruption_and_schema_changes();
+    test_quality_aligns_absolute_steps_and_excludes_fallbacks();
 
     if (g_failures == 0) {
         std::printf("test_replay: all checks passed\n");

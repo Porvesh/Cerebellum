@@ -12,6 +12,9 @@ add_compile_options(-Wall -Wextra)
 add_library(cerebellum_core INTERFACE)
 target_include_directories(cerebellum_core INTERFACE ${CMAKE_SOURCE_DIR}/include)
 
+add_library(cerebellum_replay STATIC src/replay_episode.cpp)
+target_link_libraries(cerebellum_replay PUBLIC cerebellum_core)
+
 find_package(Threads REQUIRED)
 
 add_library(cerebellum_python_bridge STATIC src/python_chunk_generator.cpp)
@@ -29,6 +32,12 @@ target_link_libraries(bench_runtime PRIVATE cerebellum_python_bridge)
 target_compile_definitions(bench_runtime PRIVATE
     CEREBELLUM_BENCH_PYTHON="${Python3_EXECUTABLE}"
     CEREBELLUM_BENCH_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+
+add_executable(bench_replay bench/replay_benchmark.cpp)
+target_link_libraries(bench_replay PRIVATE cerebellum_python_bridge cerebellum_replay)
+target_compile_definitions(bench_replay PRIVATE
+    CEREBELLUM_REPLAY_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_REPLAY_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
 
 # --- tests ---
 # One dependency-free test per component, each returning its failure count.
@@ -61,7 +70,7 @@ target_link_libraries(test_observation PRIVATE cerebellum_core)
 add_test(NAME observation COMMAND test_observation)
 
 add_executable(test_replay tests/test_replay.cpp)
-target_link_libraries(test_replay PRIVATE cerebellum_core Threads::Threads)
+target_link_libraries(test_replay PRIVATE cerebellum_replay Threads::Threads)
 add_test(NAME replay COMMAND test_replay)
 
 add_executable(test_python_chunk_generator tests/test_python_chunk_generator.cpp)
