@@ -181,6 +181,25 @@ PYTHONPATH=python conda run -n cerebellum \
 Use `--device cpu` when no GPU has enough free memory. Install the pinned optional dependencies
 without sudo using `python/requirements-smolvla.txt`.
 
+## Action safety
+
+`ActionSafetyFilter` is an optional, allocation-free boundary between the chunk queue and the
+`ActionSink`. It rejects non-finite or over-age model actions, clamps command bounds, and limits
+per-dimension action rate and acceleration. Rejected actions hold the last safe command (or a
+configured replacement before the first accepted command). The runtime remembers only the
+filtered result, so an unsafe prediction cannot later reappear through `HoldLast` or extrapolation.
+
+Physical values are deliberately not built into Cerebellum. A robot adapter constructs
+`SafetyConfig` with its command bounds, rate limits, acceleration limits, maximum observation age,
+and replacement action. For an absolute joint-position policy, action bounds are joint limits and
+action rate is joint velocity; an adapter for another command space maps its own units instead.
+Before starting control, the adapter should call `reset()` with the measured starting pose or
+command and pass the filter to `RuntimeLoop`. Hardware collision protection, torque limits, and
+the emergency stop remain the responsibility of the robot controller.
+
+Every emitted action includes `safety_flags` and `safety_rejected`. Offline replay CSVs preserve
+those fields along with `observation_age_ns`, making safety interventions inspectable after a run.
+
 ## Offline replay
 
 `ReplayObservationSource` runs prerecorded observations through the same newest-wins

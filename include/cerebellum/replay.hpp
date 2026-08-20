@@ -132,7 +132,8 @@ inline void write_replay_actions_csv(std::ostream &out,
     if (action_dim <= 0 || action_dim > kPaddedActionDim) {
         throw std::invalid_argument("replay CSV action_dim is invalid");
     }
-    out << "step,deadline_offset_ns,emit_offset_ns,fallback";
+    out << "step,deadline_offset_ns,emit_offset_ns,fallback,observation_age_ns,safety_flags,"
+           "safety_rejected";
     for (int d = 0; d < action_dim; ++d) out << ",action_" << d;
     out << '\n';
     if (records.empty()) return;
@@ -141,7 +142,9 @@ inline void write_replay_actions_csv(std::ostream &out,
     for (const ReplayActionRecord &record : records) {
         out << record.emission.step << ',' << (record.emission.deadline - origin).count() << ','
             << (record.emitted_at - origin).count() << ','
-            << (record.emission.fallback ? 1 : 0);
+            << (record.emission.fallback ? 1 : 0) << ','
+            << record.emission.observation_age.count() << ',' << record.emission.safety_flags << ','
+            << (record.emission.safety_rejected ? 1 : 0);
         for (int d = 0; d < action_dim; ++d) {
             out << ',' << record.emission.action[static_cast<std::size_t>(d)];
         }

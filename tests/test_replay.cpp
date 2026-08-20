@@ -132,7 +132,8 @@ void test_replay_runs_through_the_two_loop_runtime() {
 
     std::ostringstream csv;
     write_replay_actions_csv(csv, sink.records(), config.action_dim);
-    CHECK(csv.str().find("step,deadline_offset_ns,emit_offset_ns,fallback,action_0") == 0);
+    CHECK(csv.str().find("step,deadline_offset_ns,emit_offset_ns,fallback,observation_age_ns,"
+                         "safety_flags,safety_rejected,action_0") == 0);
     CHECK(csv.str().find("\n11,") != std::string::npos);
 }
 

@@ -244,6 +244,27 @@ void test_slow_control_skips_expired_steps() {
     }
 }
 
+void test_safety_runs_before_emit_and_fallback_history() {
+    RuntimeConfig cfg = small_config();
+    FailingGenerator generator;
+    RecordingSink sink(2);
+    SafetyConfig safety_config(cfg.action_dim);
+    safety_config.min_action[0] = -1.0F;
+    safety_config.max_action[0] = 1.0F;
+    ActionSafetyFilter safety(safety_config);
+    RuntimeLoop loop(cfg, generator, sink, 2, std::chrono::microseconds(25), &safety);
+    seed(loop, /*count=*/1, /*first=*/10.0F, /*delta=*/0.0F);
+
+    loop.run_for(2, std::chrono::microseconds(300));
+
+    CHECK(sink.emissions.size() == 2);
+    CHECK(sink.emissions[0].action[0] == 1.0F);
+    CHECK((sink.emissions[0].safety_flags & safety_flag(SafetyFlag::ActionClamped)) != 0);
+    CHECK(!sink.emissions[0].safety_rejected);
+    CHECK(sink.emissions[1].fallback);
+    CHECK(sink.emissions[1].action[0] == 1.0F);
+}
+
 void test_external_stop_joins_both_loops() {
     const RuntimeConfig cfg = small_config();
     SyntheticGenerator generator(cfg.chunk_size, std::chrono::milliseconds(2));
@@ -271,6 +292,7 @@ int main() {
     test_rtc_retains_and_aligns_model_prefix_on_worker();
     test_underrun_policies();
     test_slow_control_skips_expired_steps();
+    test_safety_runs_before_emit_and_fallback_history();
     test_external_stop_joins_both_loops();
 
     if (g_failures == 0) {

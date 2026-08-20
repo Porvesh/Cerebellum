@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <thread>
 
+#include "cerebellum/action_safety.hpp"
 #include "cerebellum/chunk_queue.hpp"
 #include "cerebellum/config.hpp"
 #include "cerebellum/timing.hpp"
@@ -57,6 +58,9 @@ struct ActionEmission {
     TimePoint deadline{};
     Action action{};
     bool fallback = false;
+    Nanos observation_age{};
+    std::uint32_t safety_flags = 0;
+    bool safety_rejected = false;
 };
 
 // Called on the control thread. Implementations must not block, allocate, or
@@ -107,16 +111,21 @@ class RuntimeLoop {
    public:
     RuntimeLoop(const RuntimeConfig &cfg, ChunkGenerator &generator, ActionSink &sink,
                 std::size_t metrics_capacity = 4096,
-                Nanos worker_poll_period = std::chrono::microseconds(100))
+                Nanos worker_poll_period = std::chrono::microseconds(100),
+                ActionSafetyFilter *safety_filter = nullptr)
         : cfg_(cfg),
           generator_(generator),
           sink_(sink),
           queue_(cfg),
           metrics_(metrics_capacity),
-          worker_poll_period_(worker_poll_period) {
+          worker_poll_period_(worker_poll_period),
+          safety_filter_(safety_filter) {
         cfg_.validate();
         if (worker_poll_period_ <= Nanos::zero()) {
             throw std::invalid_argument("worker_poll_period must be positive");
+        }
+        if (safety_filter_ && safety_filter_->config().action_dim != cfg_.action_dim) {
+            throw std::invalid_argument("safety and runtime action dimensions differ");
         }
     }
 
@@ -138,6 +147,7 @@ class RuntimeLoop {
         if (started_.exchange(true)) {
             throw std::logic_error("RuntimeLoop is single-use");
         }
+        active_control_period_ = control_period;
 
         worker_ = std::thread([this] { inference_loop(); });
         // Publish running only after the worker exists. request_stop() from a
@@ -182,16 +192,30 @@ class RuntimeLoop {
         ActionRecord record{};
         const bool available = queue_.pop(step, deadline, action, record);
 
+        Nanos observation_age{};
         if (available) {
-            remember(action);
+            observation_age = now() - record.chunk.t_obs_capture;
             metrics_.on_emit(record);
         } else {
             action = fallback_action();
-            remember(action);
             metrics_.on_underrun();
         }
 
-        sink_.emit(ActionEmission{step, deadline, action, !available});
+        std::uint32_t safety_flags = 0;
+        bool safety_rejected = false;
+        if (safety_filter_) {
+            const SafetyResult safe =
+                safety_filter_->apply(action, active_control_period_, available, observation_age);
+            action = safe.action;
+            safety_flags = safe.flags;
+            safety_rejected = safe.rejected;
+        }
+
+        // Fallback history contains only the action that actually passed the
+        // safety boundary, never the raw model prediction.
+        remember(action);
+        sink_.emit(ActionEmission{step, deadline, action, !available, observation_age,
+                                  safety_flags, safety_rejected});
     }
 
     Action fallback_action() const noexcept {
@@ -329,6 +353,8 @@ class RuntimeLoop {
     ActionChunkQueue queue_;
     ControlMetrics metrics_;
     const Nanos worker_poll_period_;
+    ActionSafetyFilter *const safety_filter_;
+    Nanos active_control_period_ = kControlPeriod;
 
     std::atomic<bool> stop_{false};
     std::atomic<bool> running_{false};

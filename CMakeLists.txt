@@ -65,6 +65,10 @@ add_executable(test_loop tests/test_loop.cpp)
 target_link_libraries(test_loop PRIVATE cerebellum_core Threads::Threads)
 add_test(NAME loop COMMAND test_loop)
 
+add_executable(test_action_safety tests/test_action_safety.cpp)
+target_link_libraries(test_action_safety PRIVATE cerebellum_core)
+add_test(NAME action_safety COMMAND test_action_safety)
+
 add_executable(test_observation tests/test_observation.cpp)
 target_link_libraries(test_observation PRIVATE cerebellum_core)
 add_test(NAME observation COMMAND test_observation)
