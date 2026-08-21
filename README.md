@@ -84,8 +84,8 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-The bridge currently uses an in-memory observation source. The worker can run either the fast
-synthetic backend or the real SmolVLA checkpoint; SmolVLA advertises its state and camera schema
+The inference worker can run either the fast synthetic backend or the real SmolVLA checkpoint;
+SmolVLA advertises its state and camera schema
 during startup, and C++ rejects mismatched observations before sending inference requests.
 RTC requests carry the retained chunk identity and aligned committed model-space prefix. The
 SmolVLA worker applies gradient-guided inpainting during every denoising step; the control
@@ -104,6 +104,35 @@ Use `CEREBELLUM_SMOLVLA_DEVICE=cuda` when a GPU has enough free memory. Model st
 per-request inference use separate configurable timeouts in `PythonChunkGeneratorOptions`.
 Set `CEREBELLUM_RUN_SMOLVLA_RTC=1` to run the direct two-request RTC smoke test; it verifies
 that guided denoising moves the new committed prefix closer to the retained chunk prefix.
+
+### LIBERO simulation
+
+`PythonSimulatorAdapter` is both the runtime's `ActionSink` and `ObservationSource`. The 30 Hz
+control thread only writes a preallocated atomic newest-action mailbox. A third, non-real-time
+worker owns Python and MuJoCo I/O, applies the newest command, and atomically publishes the next
+immutable 8D-state/two-camera observation for inference. This closes the same control → robot →
+observation loop a physical robot adapter will eventually implement.
+
+Install LIBERO into the existing project environment (no separate Conda environment is needed):
+
+```bash
+python -m pip install -e '.[libero]'
+```
+
+The real simulator test is opt-in. On a machine where EGL render-device access works, omit the
+OSMesa variable. This workstation instead uses a user-local extracted `libOSMesa.so` because no
+`sudo` or `/dev/dri/render*` access is available:
+
+```bash
+CEREBELLUM_RUN_LIBERO_SIMULATOR=1 \
+CEREBELLUM_OSMESA_LIBRARY_PATH="$HOME/.local/lib/cerebellum-osmesa/usr/lib/x86_64-linux-gnu" \
+./build/test_python_simulator
+```
+
+The test starts a persistent LIBERO `libero_spatial` task at 30 Hz, resets from its recorded init
+state, transports both 256×256 cameras plus the flattened state into C++, applies one 7D no-op
+command, and verifies the next observation. The default test backend is synthetic and requires
+neither MuJoCo nor a GPU.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

@@ -17,7 +17,9 @@ target_link_libraries(cerebellum_replay PUBLIC cerebellum_core)
 
 find_package(Threads REQUIRED)
 
-add_library(cerebellum_python_bridge STATIC src/python_chunk_generator.cpp)
+add_library(cerebellum_python_bridge STATIC
+    src/python_chunk_generator.cpp
+    src/python_simulator.cpp)
 target_link_libraries(cerebellum_python_bridge PUBLIC cerebellum_core Threads::Threads)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -84,6 +86,13 @@ target_compile_definitions(test_python_chunk_generator PRIVATE
     CEREBELLUM_TEST_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
 add_test(NAME python_chunk_generator COMMAND test_python_chunk_generator)
 
+add_executable(test_python_simulator tests/test_python_simulator.cpp)
+target_link_libraries(test_python_simulator PRIVATE cerebellum_python_bridge)
+target_compile_definitions(test_python_simulator PRIVATE
+    CEREBELLUM_TEST_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_TEST_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+add_test(NAME python_simulator COMMAND test_python_simulator)
+
 # ThreadSanitizer for the concurrency tests — the chunk queue has one producer
 # (inference worker) and one consumer (control thread), so it earns the same
 # scrutiny Retina's buffers got. Off by default; flip on with -DCEREBELLUM_TSAN=ON
@@ -98,4 +107,6 @@ if(CEREBELLUM_TSAN)
     target_link_options(test_loop PRIVATE -fsanitize=thread)
     target_compile_options(test_replay PRIVATE -fsanitize=thread -g -O1)
     target_link_options(test_replay PRIVATE -fsanitize=thread)
+    target_compile_options(test_python_simulator PRIVATE -fsanitize=thread -g -O1)
+    target_link_options(test_python_simulator PRIVATE -fsanitize=thread)
 endif()
