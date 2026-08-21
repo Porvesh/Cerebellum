@@ -134,6 +134,23 @@ state, transports both 256×256 cameras plus the flattened state into C++, appli
 command, and verifies the next observation. The default test backend is synthetic and requires
 neither MuJoCo nor a GPU.
 
+Run the LIBERO-trained SmolVLA checkpoint through the complete simulator loop:
+
+```bash
+CUDA_VISIBLE_DEVICES=3 \
+HF_HOME="$HOME/.cache/cerebellum-hf" \
+CEREBELLUM_OSMESA_LIBRARY_PATH="$HOME/.local/lib/cerebellum-osmesa/usr/lib/x86_64-linux-gnu" \
+./build/run_libero --ticks 300 --warmup-inferences 1 \
+  --model HuggingFaceVLA/smolvla_libero
+```
+
+The executable validates the checkpoint's 8D state, two-camera, and 7D action schema before
+control starts. It clamps commands to LIBERO's `[-1, 1]` action space and reports model chunks,
+fallbacks, simulator steps, safety decisions, staleness, termination, and task success.
+The rollout defaults to the official `lerobot/libero` dataset's native 10 Hz action rate. A
+future 30 Hz deployment must explicitly resample these delta actions; consuming them three times
+as fast changes their physical meaning and is not a valid evaluation.
+
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 
 ```bash

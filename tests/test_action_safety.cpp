@@ -102,6 +102,23 @@ void test_nonfinite_and_stale_actions_hold_last_safe() {
     CHECK(filter.stats().rejected == 2);
 }
 
+void test_default_unlimited_dynamics_do_not_modify_action() {
+    ActionSafetyFilter filter(one_dimension());
+    Action initial{};
+    initial[0] = -0.1234567F;
+    filter.reset(initial);
+    (void)filter.apply(initial, kControlPeriod, false, Nanos::zero());
+
+    Action requested{};
+    requested[0] = 0.7654321F;
+    const SafetyResult result = filter.apply(requested, kControlPeriod, false, Nanos::zero());
+
+    CHECK(result.action[0] == requested[0]);
+    CHECK(!result.modified());
+    CHECK(filter.stats().action_rate_limited == 0);
+    CHECK(filter.stats().action_acceleration_limited == 0);
+}
+
 void test_invalid_configuration_and_seed_are_rejected() {
     SafetyConfig config = one_dimension();
     config.max_action_rate[0] = 0.0F;
@@ -132,6 +149,7 @@ int main() {
     test_velocity_limit_uses_control_period();
     test_acceleration_limit_uses_previous_safe_velocity();
     test_nonfinite_and_stale_actions_hold_last_safe();
+    test_default_unlimited_dynamics_do_not_modify_action();
     test_invalid_configuration_and_seed_are_rejected();
 
     if (g_failures == 0) {

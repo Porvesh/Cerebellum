@@ -1,0 +1,35 @@
+{
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "suite": "libero_spatial",
+  "task_id": 0,
+  "init_state": 0,
+  "task": "pick up the black bowl between the plate and the ramekin and place it on the plate",
+  "device": "cuda",
+  "control_hz": 10,
+  "stitching": "discard",
+  "ticks_requested": 300,
+  "wall_time_ms": 30075.442,
+  "success": false,
+  "terminated": false,
+  "counts": {
+    "control_emissions": 300,
+    "fallback_actions": 2,
+    "safety_modified": 219,
+    "safety_rejections": 3,
+    "simulator_commands_applied": 161,
+    "simulator_commands_superseded": 138,
+    "simulator_observations": 162,
+    "inference_requests": 100,
+    "chunks_generated": 100,
+    "generation_failures": 0,
+    "chunks_accepted": 99,
+    "real_actions": 298,
+    "underruns": 2,
+    "staleness_violations": 275
+  },
+  "safety": {
+    "clamped": 216,
+    "stale_rejected": 3
+  },
+  "simulator_healthy": true
+}

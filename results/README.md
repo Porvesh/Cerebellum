@@ -37,6 +37,28 @@ Raw reports:
 - [`synthetic_bridge_baseline.json`](synthetic_bridge_baseline.json)
 - [`smolvla_h100_baseline.json`](smolvla_h100_baseline.json)
 
+## LIBERO closed-loop integration
+
+The `HuggingFaceVLA/smolvla_libero` checkpoint ran through the complete
+LIBERO → C++ observation adapter → SmolVLA → action queue → safety filter →
+MuJoCo loop on physical GPU 3. The checkpoint schema matched without adaptation:
+two 256×256 cameras, an 8D Panda state, 50×32 model-space chunks, and 50×7
+postprocessed robot commands. All 100 inference requests completed successfully.
+
+The rollout used the official `lerobot/libero` dataset's native 10 Hz action
+rate. It did not complete task 0. User-local CPU OSMesa rendering advanced only
+161 of 300 commands during the 30-second control interval; the newest-wins
+mailbox superseded 138 commands. This is a simulator-throughput limitation, so
+the failed task is not a clean policy-quality measurement. GPU/EGL rendering or
+a synchronous evaluation mode is needed before reporting success rate.
+
+The run also showed that 216 emitted commands needed `[-1, 1]` action-space
+clamping and 275 of 298 model actions exceeded Cerebellum's 350 ms freshness
+bound under Discard stitching. Both require investigation before claiming a
+deployment-quality LIBERO controller.
+
+- [`libero_smolvla_gpu3_discard.json`](libero_smolvla_gpu3_discard.json)
+
 ## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action

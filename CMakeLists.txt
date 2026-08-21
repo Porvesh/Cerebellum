@@ -41,6 +41,12 @@ target_compile_definitions(bench_replay PRIVATE
     CEREBELLUM_REPLAY_PYTHON="${Python3_EXECUTABLE}"
     CEREBELLUM_REPLAY_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
 
+add_executable(run_libero bench/libero_rollout.cpp)
+target_link_libraries(run_libero PRIVATE cerebellum_python_bridge)
+target_compile_definitions(run_libero PRIVATE
+    CEREBELLUM_LIBERO_PYTHON="${Python3_EXECUTABLE}"
+    CEREBELLUM_LIBERO_PYTHONPATH="${CMAKE_SOURCE_DIR}/python")
+
 # --- tests ---
 # One dependency-free test per component, each returning its failure count.
 enable_testing()

@@ -158,24 +158,27 @@ class ActionSafetyFilter {
             }
 
             if (!have_last_ || !(seconds > 0.0F)) continue;
-            const float max_delta = config_.max_action_rate[i] * seconds;
-            const float velocity_limited =
-                std::clamp(result.action[i], last_action_[i] - max_delta, last_action_[i] + max_delta);
-            if (velocity_limited != result.action[i]) {
-                result.action[i] = velocity_limited;
-                result.flags |= safety_flag(SafetyFlag::ActionRateLimited);
+            if (std::isfinite(config_.max_action_rate[i])) {
+                const float max_delta = config_.max_action_rate[i] * seconds;
+                const float velocity_limited = std::clamp(
+                    result.action[i], last_action_[i] - max_delta, last_action_[i] + max_delta);
+                if (velocity_limited != result.action[i]) {
+                    result.action[i] = velocity_limited;
+                    result.flags |= safety_flag(SafetyFlag::ActionRateLimited);
+                }
             }
 
-            if (!have_velocity_) continue;
-            const float requested_velocity = (result.action[i] - last_action_[i]) / seconds;
-            const float max_velocity_delta = config_.max_action_acceleration[i] * seconds;
-            const float limited_velocity =
-                std::clamp(requested_velocity, previous_velocity_[i] - max_velocity_delta,
-                           previous_velocity_[i] + max_velocity_delta);
-            const float acceleration_limited = last_action_[i] + limited_velocity * seconds;
-            if (acceleration_limited != result.action[i]) {
-                result.action[i] = acceleration_limited;
-                result.flags |= safety_flag(SafetyFlag::ActionAccelerationLimited);
+            if (have_velocity_ && std::isfinite(config_.max_action_acceleration[i])) {
+                const float requested_velocity = (result.action[i] - last_action_[i]) / seconds;
+                const float max_velocity_delta = config_.max_action_acceleration[i] * seconds;
+                const float limited_velocity =
+                    std::clamp(requested_velocity, previous_velocity_[i] - max_velocity_delta,
+                               previous_velocity_[i] + max_velocity_delta);
+                const float acceleration_limited = last_action_[i] + limited_velocity * seconds;
+                if (acceleration_limited != result.action[i]) {
+                    result.action[i] = acceleration_limited;
+                    result.flags |= safety_flag(SafetyFlag::ActionAccelerationLimited);
+                }
             }
 
             // Absolute command bounds have priority when rate and acceleration
