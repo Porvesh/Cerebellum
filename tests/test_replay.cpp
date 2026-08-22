@@ -107,6 +107,8 @@ void test_replay_runs_through_the_two_loop_runtime() {
         frame(13, std::chrono::milliseconds(6), 13),
     });
     RuntimeConfig config;
+    config.control_period = std::chrono::milliseconds(1);
+    config.inference_budget_ms = 1.0;
     config.chunk_size = 12;
     config.refresh_trigger = 6;
     config.queue_capacity = 18;
@@ -117,7 +119,7 @@ void test_replay_runs_through_the_two_loop_runtime() {
     ReplayActionSink sink(12);
     RuntimeLoop loop(config, generator, sink, 12, std::chrono::microseconds(50));
     source.start();
-    loop.run_for(12, std::chrono::milliseconds(1));
+    loop.run_for(12);
 
     CHECK(sink.records().size() == 12);
     CHECK(sink.dropped_records() == 0);

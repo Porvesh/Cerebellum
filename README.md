@@ -150,6 +150,8 @@ fallbacks, simulator steps, safety decisions, staleness, termination, and task s
 The rollout defaults to the official `lerobot/libero` dataset's native 10 Hz action rate. A
 future 30 Hz deployment must explicitly resample these delta actions; consuming them three times
 as fast changes their physical meaning and is not a valid evaluation.
+`RuntimeConfig::control_period` is the single runtime clock source: refresh floors, chunk duration,
+RTC delay/horizon defaults, safety timing, and measured inference-delay steps derive from it.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

@@ -93,12 +93,13 @@ class ActionChunkQueue {
     explicit ActionChunkQueue(const RuntimeConfig &cfg, std::size_t seam_capacity = 4096)
         : chunk_size_(cfg.chunk_size),
           action_dim_(cfg.action_dim),
-          refresh_trigger_(cfg.refresh_trigger),
+          refresh_trigger_(cfg.effective_refresh_trigger()),
           stitching_(cfg.stitching),
           refresh_policy_(cfg.refresh_policy),
-          rtc_refresh_gap_(cfg.rtc.execution_horizon - cfg.rtc.inference_delay),
-          inference_delay_(cfg.rtc.inference_delay),
-          execution_horizon_(cfg.rtc.execution_horizon),
+          rtc_refresh_gap_(cfg.effective_rtc_execution_horizon() -
+                           cfg.effective_rtc_inference_delay()),
+          inference_delay_(cfg.effective_rtc_inference_delay()),
+          execution_horizon_(cfg.effective_rtc_execution_horizon()),
           pool_(kChunkSlots),
           ready_(kChunkSlots),
           free_(kChunkSlots),

@@ -3,13 +3,15 @@
 
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 
 namespace cerebellum {
 
-// --- the contract -----------------------------------------------------------
-// Hardcoded so a measurement can't erode them.
+// --- deployment defaults ---------------------------------------------------
+// RuntimeConfig may select another policy-native period; 30 Hz remains the
+// physical deployment default and the basis of the existing benchmark corpus.
 
 inline constexpr int kControlHz = 30;
 // Measured deployment target: two back-to-back ~149 ms SmolVLA windows, one
@@ -29,11 +31,24 @@ inline constexpr double kBudgetTargetMs = 146.0;
 
 // Ticks spanned by `ms`, rounded up. Serves both the refresh trigger and RTC's
 // inference_delay (§15.5). Hand-rolled: std::ceil isn't constexpr until C++23.
-inline constexpr int steps_for(double ms) {
+inline constexpr int steps_for(double ms, std::chrono::nanoseconds period = kControlPeriod) {
     if (ms <= 0.0) return 0;
-    const double ticks = ms / kControlPeriodMs;
+    const double period_ms = static_cast<double>(period.count()) / 1e6;
+    if (period_ms <= 0.0) return 0;
+    const double ticks = ms / period_ms;
     const int whole = static_cast<int>(ticks);
     return static_cast<double>(whole) < ticks ? whole + 1 : whole;
+}
+
+inline constexpr int steps_for_duration(std::chrono::nanoseconds duration,
+                                        std::chrono::nanoseconds period = kControlPeriod) {
+    if (duration <= std::chrono::nanoseconds::zero() ||
+        period <= std::chrono::nanoseconds::zero()) {
+        return 0;
+    }
+    const auto whole = duration.count() / period.count();
+    const auto remainder = duration.count() % period.count();
+    return static_cast<int>(whole + (remainder != 0 ? 1 : 0));
 }
 
 // --- checkpoint shape -------------------------------------------------------
@@ -77,22 +92,26 @@ enum class Stitching { Discard, Ensemble, Rtc };
 enum class RefreshPolicy { Tail, Continuous, Horizon };
 
 struct RtcConfig {
-    // Provisional startup floor inherited from the ordinary forward budget;
-    // the runtime raises d from measured RTC latency. Benchmarks override these
-    // for a selected denoising count (five-step RTC measured d=s=8).
-    int execution_horizon = 6;
-    int inference_delay = steps_for(kBudgetTargetMs);
+    // Zero means derive the step count from RuntimeConfig's control period.
+    // Positive values are explicit benchmark/deployment overrides.
+    int execution_horizon = 0;
+    int inference_delay = 0;
     int denoise_steps = kDenoiseSteps;
 };
 
 struct RuntimeConfig {
+    // Single source of truth for every duration-to-action-step conversion.
+    std::chrono::nanoseconds control_period = kControlPeriod;
+    double inference_budget_ms = kBudgetTargetMs;
+
     int chunk_size = kChunkSize;
     int action_dim = kActionDim;
     int padded_action_dim = kPaddedActionDim;
     int denoise_steps = kDenoiseSteps;
 
-    int refresh_trigger = 6;  // >= steps_for(kBudgetTargetMs), < chunk_size
-    int queue_capacity = 64;  // >= chunk_size + refresh_trigger
+    // Zero derives ceil(inference_budget / period) plus one scheduling tick.
+    int refresh_trigger = 0;
+    int queue_capacity = 64;  // >= chunk_size + effective_refresh_trigger()
 
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;
@@ -101,10 +120,30 @@ struct RuntimeConfig {
     ActionSpace action_space = ActionSpace::AbsolutePosition;  // LeRobot convention
     UnderrunPolicy underrun = UnderrunPolicy::HoldLast;
 
-    double control_period_ms() const { return kControlPeriodMs; }
+    double control_period_ms() const {
+        return static_cast<double>(control_period.count()) / 1e6;
+    }
 
-    // ~1.67 s to drain at H=50 — the staleness its tail inherits (§15.1).
-    double chunk_duration_ms() const { return chunk_size * kControlPeriodMs; }
+    int steps_for_ms(double ms) const { return cerebellum::steps_for(ms, control_period); }
+
+    int effective_refresh_trigger() const {
+        return refresh_trigger > 0 ? refresh_trigger : steps_for_ms(inference_budget_ms) + 1;
+    }
+
+    int effective_rtc_inference_delay() const {
+        return rtc.inference_delay > 0 ? rtc.inference_delay : steps_for_ms(inference_budget_ms);
+    }
+
+    int effective_rtc_execution_horizon() const {
+        if (rtc.execution_horizon > 0) return rtc.execution_horizon;
+        // Preserve the default six-action/200 ms horizon at 30 Hz, while a
+        // 10 Hz policy derives two actions from the same wall-clock interval.
+        constexpr double kDefaultHorizonMs = 6.0 * kControlPeriodMs;
+        return std::max(effective_rtc_inference_delay(), steps_for_ms(kDefaultHorizonMs));
+    }
+
+    // ~1.67 s at the default 30 Hz; 5 s for a 10 Hz LIBERO policy.
+    double chunk_duration_ms() const { return chunk_size * control_period_ms(); }
 
     void validate() const;  // validate.hpp
 };

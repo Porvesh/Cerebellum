@@ -140,23 +140,18 @@ class RuntimeLoop {
     // Runs control on the calling thread and inference on one worker thread.
     // The first deadline is one period in the future, giving the worker one
     // period to begin the initial inference without changing the fixed grid.
-    void run_for(std::size_t max_ticks, Nanos control_period = kControlPeriod) {
-        if (control_period <= Nanos::zero()) {
-            throw std::invalid_argument("control_period must be positive");
-        }
+    void run_for(std::size_t max_ticks) {
         if (started_.exchange(true)) {
             throw std::logic_error("RuntimeLoop is single-use");
         }
-        active_control_period_ = control_period;
-
         worker_ = std::thread([this] { inference_loop(); });
         // Publish running only after the worker exists. request_stop() from a
         // thread that observed running()==true can no longer be overwritten by
         // startup initialization.
         running_.store(true, std::memory_order_release);
 
-        const TimePoint origin = now() + control_period;
-        const ScheduleClock schedule(origin, control_period);
+        const TimePoint origin = now() + cfg_.control_period;
+        const ScheduleClock schedule(origin, cfg_.control_period);
         std::int64_t step = 0;
 
         for (std::size_t tick = 0; tick < max_ticks && !stop_.load(std::memory_order_acquire);
@@ -205,7 +200,7 @@ class RuntimeLoop {
         bool safety_rejected = false;
         if (safety_filter_) {
             const SafetyResult safe =
-                safety_filter_->apply(action, active_control_period_, available, observation_age);
+                safety_filter_->apply(action, cfg_.control_period, available, observation_age);
             action = safe.action;
             safety_flags = safe.flags;
             safety_rejected = safe.rejected;
@@ -253,7 +248,7 @@ class RuntimeLoop {
         std::uint64_t next_chunk_id = 1;
         Chunk retained{};  // worker-private copy; never touches consumer-owned slots
         bool have_retained = false;
-        RtcDelayEstimator delay_estimator(cfg_.rtc.inference_delay);
+        RtcDelayEstimator delay_estimator(cfg_.effective_rtc_inference_delay());
 
         while (!stop_.load(std::memory_order_acquire)) {
             if (ready_to_publish) {
@@ -326,9 +321,8 @@ class RuntimeLoop {
             const auto generation_ns = std::chrono::duration_cast<Nanos>(slot->stamps.t_infer_end -
                                                                          slot->stamps.t_infer_start)
                                            .count();
-            const auto period_ns = kControlPeriod.count();
             const int measured_delay =
-                static_cast<int>((generation_ns + period_ns - 1) / period_ns);
+                steps_for_duration(Nanos{generation_ns}, cfg_.control_period);
             if (cfg_.stitching == Stitching::Rtc && measured_delay >= cfg_.chunk_size) {
                 ++inference_stats_.rtc_inference_overruns;
             }
@@ -354,8 +348,6 @@ class RuntimeLoop {
     ControlMetrics metrics_;
     const Nanos worker_poll_period_;
     ActionSafetyFilter *const safety_filter_;
-    Nanos active_control_period_ = kControlPeriod;
-
     std::atomic<bool> stop_{false};
     std::atomic<bool> running_{false};
     std::atomic<bool> started_{false};

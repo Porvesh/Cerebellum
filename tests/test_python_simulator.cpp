@@ -104,6 +104,8 @@ void test_latest_action_wins_without_blocking_control() {
 void test_runtime_closes_observation_inference_action_loop() {
   PythonSimulatorAdapter simulator(options());
   RuntimeConfig config;
+  config.control_period = std::chrono::milliseconds(1);
+  config.inference_budget_ms = 1.0;
   config.action_dim = 7;
   config.action_space = ActionSpace::Delta;
   PythonChunkGeneratorOptions generator_options;
@@ -115,7 +117,7 @@ void test_runtime_closes_observation_inference_action_loop() {
   RuntimeLoop loop(config, generator, simulator, 100,
                    std::chrono::microseconds(20));
 
-  loop.run_for(100, std::chrono::milliseconds(1));
+  loop.run_for(100);
 
   CHECK(loop.inference_stats().generated > 0);
   CHECK(loop.queue().consumer_stats().chunks_accepted > 0);

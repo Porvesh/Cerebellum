@@ -65,6 +65,7 @@ static RuntimeConfig cfg_with(Stitching s) {
     cfg.stitching = s;
     if (s == Stitching::Rtc) {
         cfg.refresh_policy = RefreshPolicy::Horizon;
+        cfg.rtc.inference_delay = cfg.effective_rtc_inference_delay();
         cfg.rtc.execution_horizon = cfg.rtc.inference_delay;
     }
     cfg.validate();
@@ -117,6 +118,7 @@ static void test_refresh_trigger() {
     ScheduleClock sched(now());
     Action a{};
     ActionRecord rec;
+    const int refresh_trigger = cfg.effective_refresh_trigger();
 
     // Nothing queued: the trigger is already asserted, which is how the loop
     // gets its first chunk.
@@ -130,16 +132,16 @@ static void test_refresh_trigger() {
     CHECK(!q.should_refresh());
 
     // Drain to exactly R remaining.
-    for (std::int64_t step = 10; step < kChunkSize - cfg.refresh_trigger; ++step) {
+    for (std::int64_t step = 10; step < kChunkSize - refresh_trigger; ++step) {
         q.pop(step, sched.deadline(step), a, rec);
     }
-    CHECK(q.remaining() == cfg.refresh_trigger);
+    CHECK(q.remaining() == refresh_trigger);
     CHECK(q.should_refresh());
 
     // A published-but-unaccepted chunk suppresses the trigger. Without this the
     // worker fires a second inference for a chunk that is already computed and
     // sitting in the ring — wasted GPU and an extra seam, for nothing.
-    q.publish(fill(q, kChunkSize - cfg.refresh_trigger, kChunkSize, 2.0f));
+    q.publish(fill(q, kChunkSize - refresh_trigger, kChunkSize, 2.0f));
     CHECK(!q.should_refresh());
 }
 
@@ -161,6 +163,7 @@ static void test_continuous_refresh_starts_after_each_accept() {
 
 static void test_rtc_preserves_configured_refresh_gap() {
     RuntimeConfig zero_gap = cfg_with(Stitching::Rtc);
+    zero_gap.rtc.inference_delay = zero_gap.effective_rtc_inference_delay();
     zero_gap.rtc.execution_horizon = zero_gap.rtc.inference_delay;
     ActionChunkQueue earliest(zero_gap);
     earliest.update_rtc_timing(8);

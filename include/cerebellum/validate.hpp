@@ -13,9 +13,12 @@ namespace cerebellum {
 // staleness(i) = budget + i * period. Returns 7 under the §6 budget against a
 // checkpoint that emits 50 — continuous refresh is required to hold the bound
 // (§15.1).
-inline constexpr int max_actions_within_staleness(double budget_ms = kBudgetTargetMs) {
+inline constexpr int max_actions_within_staleness(
+    double budget_ms = kBudgetTargetMs, std::chrono::nanoseconds period = kControlPeriod) {
     if (budget_ms > kMaxStalenessMs) return 0;
-    return static_cast<int>((kMaxStalenessMs - budget_ms) / kControlPeriodMs) + 1;
+    const double period_ms = static_cast<double>(period.count()) / 1e6;
+    if (period_ms <= 0.0) return 0;
+    return static_cast<int>((kMaxStalenessMs - budget_ms) / period_ms) + 1;
 }
 
 // Without this the kChunkSize constants are a tautology — nothing else in the
@@ -55,12 +58,19 @@ inline void check_horizons(int inference_delay, int execution_horizon, int chunk
 // a quietly edited bound. Asserted in the test, settled by the §11.2 sweep
 // (§15.1).
 inline void RuntimeConfig::validate() const {
+    if (control_period <= std::chrono::nanoseconds::zero()) {
+        throw std::invalid_argument("control_period must be positive");
+    }
+    if (!(inference_budget_ms > 0.0)) {
+        throw std::invalid_argument("inference_budget_ms must be positive");
+    }
     if (chunk_size <= 0) throw std::invalid_argument("chunk_size must be positive");
     if (action_dim <= 0) throw std::invalid_argument("action_dim must be positive");
     if (denoise_steps <= 0) throw std::invalid_argument("denoise_steps must be positive");
     if (refresh_trigger < 0) {
         throw std::invalid_argument("refresh_trigger must be non-negative");
     }
+    const int effective_refresh = effective_refresh_trigger();
 
     // The model denoises padded and slices down, so RTC's prefix lives there
     // (§4.5).
@@ -71,24 +81,24 @@ inline void RuntimeConfig::validate() const {
     }
 
     // R >= H re-infers before the previous chunk produced anything.
-    if (refresh_trigger >= chunk_size) {
-        throw std::invalid_argument("refresh_trigger (" + std::to_string(refresh_trigger) +
+    if (effective_refresh >= chunk_size) {
+        throw std::invalid_argument("refresh_trigger (" + std::to_string(effective_refresh) +
                                     ") >= chunk_size (" + std::to_string(chunk_size) + ")");
     }
 
     // R must cover observation-to-chunk-ready, not just the forward pass (§15.2).
-    const int floor_r = steps_for(kBudgetTargetMs);
-    if (refresh_trigger < floor_r) {
-        throw std::invalid_argument("refresh_trigger (" + std::to_string(refresh_trigger) +
+    const int floor_r = steps_for_ms(inference_budget_ms);
+    if (effective_refresh < floor_r) {
+        throw std::invalid_argument("refresh_trigger (" + std::to_string(effective_refresh) +
                                     ") below ceil(budget/period) = " + std::to_string(floor_r) +
                                     ": guarantees an underrun");
     }
 
     // A chunk pushed while R remain queued has to fit.
-    if (queue_capacity < chunk_size + refresh_trigger) {
+    if (queue_capacity < chunk_size + effective_refresh) {
         throw std::invalid_argument("queue_capacity (" + std::to_string(queue_capacity) +
                                     ") < chunk_size + refresh_trigger (" +
-                                    std::to_string(chunk_size + refresh_trigger) + ")");
+                                    std::to_string(chunk_size + effective_refresh) + ")");
     }
 
     // Zeros against absolute positions command motion to the dataset mean
@@ -108,7 +118,8 @@ inline void RuntimeConfig::validate() const {
                 "Stitching::Rtc requires RefreshPolicy::Horizon so inference starts "
                 "at s-d");
         }
-        check_horizons(rtc.inference_delay, rtc.execution_horizon, chunk_size);
+        check_horizons(effective_rtc_inference_delay(), effective_rtc_execution_horizon(),
+                       chunk_size);
     }
 }
 

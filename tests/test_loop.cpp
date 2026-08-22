@@ -111,9 +111,13 @@ class RtcRecordingGenerator final : public ChunkGenerator {
 
 RuntimeConfig small_config(UnderrunPolicy policy = UnderrunPolicy::HoldLast) {
     RuntimeConfig cfg{};
+    cfg.control_period = std::chrono::microseconds(500);
+    cfg.inference_budget_ms = 0.5;
     cfg.chunk_size = 12;
     cfg.refresh_trigger = 6;
     cfg.queue_capacity = 18;
+    cfg.rtc.inference_delay = 1;
+    cfg.rtc.execution_horizon = 1;
     cfg.underrun = policy;
     if (policy == UnderrunPolicy::Zeros) {
         cfg.action_space = ActionSpace::JointVelocity;
@@ -145,9 +149,10 @@ void test_two_loops_run_concurrently() {
     RecordingSink sink(100);
     RuntimeLoop loop(cfg, generator, sink, 100, std::chrono::microseconds(50));
 
-    loop.run_for(100, std::chrono::microseconds(500));
+    loop.run_for(100);
 
     CHECK(sink.emissions.size() == 100);
+    CHECK(sink.emissions[1].deadline - sink.emissions[0].deadline == cfg.control_period);
     CHECK(loop.metrics().ticks == 100);
     CHECK(loop.inference_stats().generated > 3);
     CHECK(loop.inference_stats().generation_wall_ns > 0);
@@ -185,7 +190,7 @@ void test_rtc_retains_and_aligns_model_prefix_on_worker() {
     RecordingSink sink(80);
     RuntimeLoop loop(cfg, generator, sink, 80, std::chrono::microseconds(50));
 
-    loop.run_for(80, std::chrono::milliseconds(1));
+    loop.run_for(80);
 
     CHECK(generator.seen.size() >= 2);
     if (generator.seen.size() >= 2) {
@@ -202,7 +207,7 @@ std::vector<ActionEmission> run_fallback(UnderrunPolicy policy) {
     RecordingSink sink(4);
     RuntimeLoop loop(cfg, generator, sink, 4, std::chrono::microseconds(25));
     seed(loop, /*count=*/2, /*first=*/1.0f, /*delta=*/2.0f);
-    loop.run_for(4, std::chrono::microseconds(300));
+    loop.run_for(4);
     CHECK(loop.metrics().underruns == 2);
     CHECK(generator.calls > 0);
     return sink.emissions;
@@ -232,7 +237,7 @@ void test_slow_control_skips_expired_steps() {
     RuntimeLoop loop(cfg, generator, sink, 5, std::chrono::microseconds(25));
     seed(loop, /*count=*/12, /*first=*/0.0f, /*delta=*/1.0f);
 
-    loop.run_for(5, std::chrono::microseconds(300));
+    loop.run_for(5);
 
     CHECK(sink.emissions.size() == 5);
     CHECK(sink.emissions.back().step > 4);  // grid advanced farther than call count
@@ -255,7 +260,7 @@ void test_safety_runs_before_emit_and_fallback_history() {
     RuntimeLoop loop(cfg, generator, sink, 2, std::chrono::microseconds(25), &safety);
     seed(loop, /*count=*/1, /*first=*/10.0F, /*delta=*/0.0F);
 
-    loop.run_for(2, std::chrono::microseconds(300));
+    loop.run_for(2);
 
     CHECK(sink.emissions.size() == 2);
     CHECK(sink.emissions[0].action[0] == 1.0F);
@@ -272,7 +277,7 @@ void test_external_stop_joins_both_loops() {
     RuntimeLoop loop(cfg, generator, sink, 100, std::chrono::microseconds(25));
 
     std::thread control(
-        [&] { loop.run_for(/*max_ticks=*/1'000'000, std::chrono::microseconds(200)); });
+        [&] { loop.run_for(/*max_ticks=*/1'000'000); });
     while (!loop.running()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(3));
     loop.request_stop();

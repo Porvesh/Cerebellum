@@ -26,10 +26,10 @@ struct Arguments {
     int control_hz = 10;
     int ticks = 300;
     int warmup_inferences = 1;
-    int refresh_trigger = 8;
+    int refresh_trigger = 0;
     int rtc_denoise_steps = 5;
-    int rtc_inference_delay = 8;
-    int rtc_execution_horizon = 8;
+    int rtc_inference_delay = 0;
+    int rtc_execution_horizon = 0;
     double max_observation_age_ms = 1000.0;
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Continuous;
@@ -103,7 +103,7 @@ Arguments parse_arguments(int argc, char **argv) {
         }
     }
     if (args.task_id < 0 || args.init_state < 0 || args.control_hz <= 0 || args.ticks <= 0 ||
-        args.warmup_inferences < 0 || args.refresh_trigger <= 0 ||
+        args.warmup_inferences < 0 || args.refresh_trigger < 0 ||
         args.refresh_trigger >= kChunkSize || !(args.max_observation_age_ms > 0.0)) {
         throw std::invalid_argument("invalid LIBERO rollout argument");
     }
@@ -157,6 +157,7 @@ class MeasuredSimulatorSink final : public ActionSink {
 };
 
 void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
+            const RuntimeConfig &config,
             const PythonSimulatorAdapter &simulator, const MeasuredSimulatorSink &sink,
             const ActionSafetyFilter &safety, Nanos wall_time) {
     const SimulatorStats sim = simulator.stats();
@@ -170,7 +171,11 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "  \"init_state\": " << args.init_state << ",\n"
         << "  \"task\": \"" << simulator.task() << "\",\n"
         << "  \"device\": \"" << args.device << "\",\n"
-        << "  \"control_hz\": " << args.control_hz << ",\n"
+      << "  \"control_hz\": " << args.control_hz << ",\n"
+      << "  \"control_period_ms\": " << config.control_period_ms() << ",\n"
+      << "  \"refresh_trigger\": " << config.effective_refresh_trigger() << ",\n"
+      << "  \"rtc_inference_delay\": " << loop.queue().inference_delay() << ",\n"
+      << "  \"rtc_execution_horizon\": " << loop.queue().execution_horizon() << ",\n"
         << "  \"stitching\": \"" << (args.stitching == Stitching::Rtc ? "rtc" : "discard")
         << "\",\n"
         << "  \"ticks_requested\": " << args.ticks << ",\n"
@@ -220,12 +225,13 @@ int main(int argc, char **argv) {
         PythonSimulatorAdapter simulator(simulator_options);
 
         RuntimeConfig config;
+        config.control_period = Nanos{1'000'000'000 / args.control_hz};
         config.action_dim = simulator.action_dim();
         config.action_space = ActionSpace::Delta;
         config.stitching = args.stitching;
         config.refresh_policy = args.refresh_policy;
         config.refresh_trigger = args.refresh_trigger;
-        config.queue_capacity = config.chunk_size + config.refresh_trigger;
+        config.queue_capacity = config.chunk_size + config.effective_refresh_trigger();
         config.rtc.denoise_steps = args.rtc_denoise_steps;
         config.rtc.inference_delay = args.rtc_inference_delay;
         config.rtc.execution_horizon = args.rtc_execution_horizon;
@@ -264,18 +270,18 @@ int main(int argc, char **argv) {
         RuntimeLoop loop(config, generator, sink, static_cast<std::size_t>(args.ticks),
                          std::chrono::microseconds(100), &safety);
         const TimePoint started = now();
-        loop.run_for(static_cast<std::size_t>(args.ticks), Nanos{1'000'000'000 / args.control_hz});
+        loop.run_for(static_cast<std::size_t>(args.ticks));
         const Nanos wall_time = now() - started;
 
         if (!simulator.healthy() && !simulator.last_error().empty()) {
             throw std::runtime_error("simulator failed: " + simulator.last_error());
         }
         if (args.output.empty()) {
-            report(std::cout, args, loop, simulator, sink, safety, wall_time);
+            report(std::cout, args, loop, config, simulator, sink, safety, wall_time);
         } else {
             std::ofstream output(args.output);
             if (!output) throw std::runtime_error("cannot open output file: " + args.output);
-            report(output, args, loop, simulator, sink, safety, wall_time);
+            report(output, args, loop, config, simulator, sink, safety, wall_time);
         }
         return 0;
     } catch (const std::exception &exc) {

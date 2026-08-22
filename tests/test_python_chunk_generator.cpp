@@ -161,12 +161,14 @@ class RecordingSink final : public ActionSink {
 
 void test_runtime_publishes_python_chunk_to_control() {
     RuntimeConfig config;
+    config.control_period = std::chrono::milliseconds(1);
+    config.inference_budget_ms = 1.0;
     StaticObservationSource source(observation());
     PythonChunkGenerator generator(config, source, options());
     RecordingSink sink(100);
     RuntimeLoop loop(config, generator, sink, 100, std::chrono::microseconds(50));
 
-    loop.run_for(100, std::chrono::milliseconds(1));
+    loop.run_for(100);
 
     CHECK(loop.inference_stats().generated > 0);
     CHECK(loop.queue().consumer_stats().chunks_accepted > 0);

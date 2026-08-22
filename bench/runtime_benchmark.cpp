@@ -28,8 +28,8 @@ struct Arguments {
     int warmup_inferences = 2;
     int refresh_trigger = 6;
     int rtc_denoise_steps = kDenoiseSteps;
-    int rtc_inference_delay = RtcConfig{}.inference_delay;
-    int rtc_execution_horizon = RtcConfig{}.execution_horizon;
+    int rtc_inference_delay = RuntimeConfig{}.effective_rtc_inference_delay();
+    int rtc_execution_horizon = RuntimeConfig{}.effective_rtc_execution_horizon();
     double synthetic_inference_ms = 149.0;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     Stitching stitching = Stitching::Discard;

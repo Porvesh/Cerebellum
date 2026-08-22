@@ -85,6 +85,10 @@ static void test_steps_for() {
     CHECK(steps_for(0.0) == 0);
     CHECK(steps_for(33.0) == 1);
     CHECK(steps_for(34.0) == 2);
+    CHECK(steps_for(146.0, std::chrono::milliseconds(100)) == 2);
+    CHECK(steps_for_duration(std::chrono::milliseconds(150),
+                             std::chrono::milliseconds(100)) == 2);
+    CHECK(steps_for_duration(std::chrono::milliseconds(150), kControlPeriod) == 5);
 }
 
 static void test_staleness_bound_conflicts_with_chunk_size() {
@@ -121,9 +125,26 @@ static void test_defaults_are_valid() {
     CHECK(cfg.action_dim == 6);
     CHECK(cfg.stitching == Stitching::Discard);
     CHECK(cfg.control_period_ms() > 33.3 && cfg.control_period_ms() < 33.4);
+    CHECK(cfg.effective_refresh_trigger() == 6);
+    CHECK(cfg.effective_rtc_inference_delay() == 5);
+    CHECK(cfg.effective_rtc_execution_horizon() == 6);
     // A 50-action chunk at 30 Hz takes ~1.67 s to drain — the staleness its tail
     // inherits, and the other half of §15.1.
     CHECK(cfg.chunk_duration_ms() > 1666.0 && cfg.chunk_duration_ms() < 1667.0);
+}
+
+static void test_ten_hz_derives_all_step_counts_from_one_period() {
+    RuntimeConfig cfg{};
+    cfg.control_period = std::chrono::milliseconds(100);
+    cfg.validate();
+
+    CHECK(cfg.control_period_ms() == 100.0);
+    CHECK(cfg.chunk_duration_ms() == 5000.0);
+    CHECK(cfg.steps_for_ms(cfg.inference_budget_ms) == 2);
+    CHECK(cfg.effective_refresh_trigger() == 3);
+    CHECK(cfg.effective_rtc_inference_delay() == 2);
+    CHECK(cfg.effective_rtc_execution_horizon() == 2);
+    CHECK(max_actions_within_staleness(cfg.inference_budget_ms, cfg.control_period) == 3);
 }
 
 static void test_validation_rejects_unusable_configs() {
@@ -164,6 +185,7 @@ int main() {
     test_staleness_bound_conflicts_with_chunk_size();
     test_horizon_chain();
     test_defaults_are_valid();
+    test_ten_hz_derives_all_step_counts_from_one_period();
     test_validation_rejects_unusable_configs();
 
     if (g_failures == 0) {
