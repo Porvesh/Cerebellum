@@ -59,7 +59,19 @@ clamping and 270 of 298 model actions exceeded Cerebellum's 350 ms freshness
 bound under Discard stitching. Both require investigation before claiming a
 deployment-quality LIBERO controller.
 
+A follow-up smoke run made those requirements machine-readable instead of
+inferring them from raw counters. The LIBERO profile uses a provisional 300 ms
+inference budget, which derives a four-action refresh trigger and `d=s=3` at
+10 Hz. The control loop sustained 9.999 Hz and inference had no failures, but
+CPU OSMesa sustained only 5.000 simulator steps/s and delivered 51.7% of
+resolved commands. The report therefore marks simulator throughput, command
+delivery, freshness, and overall runtime liveness as failed while leaving the
+process-health result true. The thresholds are 95% of the policy-native action
+rate and 99% command delivery; the existing 350 ms freshness bound was not
+loosened to make the simulator pass.
+
 - [`libero_smolvla_gpu3_discard.json`](libero_smolvla_gpu3_discard.json)
+- [`libero_liveness_gpu3_smoke.json`](libero_liveness_gpu3_smoke.json)
 
 ## Discard refresh-policy baseline
 

@@ -30,6 +30,7 @@ struct Arguments {
     int rtc_denoise_steps = 5;
     int rtc_inference_delay = 0;
     int rtc_execution_horizon = 0;
+    double inference_budget_ms = 300.0;
     double max_observation_age_ms = 1000.0;
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Continuous;
@@ -71,6 +72,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.rtc_inference_delay = std::stoi(std::string(value(arg)));
         } else if (arg == "--rtc-execution-horizon") {
             args.rtc_execution_horizon = std::stoi(std::string(value(arg)));
+        } else if (arg == "--inference-budget-ms") {
+            args.inference_budget_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--max-observation-age-ms") {
             args.max_observation_age_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--stitching") {
@@ -104,7 +107,8 @@ Arguments parse_arguments(int argc, char **argv) {
     }
     if (args.task_id < 0 || args.init_state < 0 || args.control_hz <= 0 || args.ticks <= 0 ||
         args.warmup_inferences < 0 || args.refresh_trigger < 0 ||
-        args.refresh_trigger >= kChunkSize || !(args.max_observation_age_ms > 0.0)) {
+        args.refresh_trigger >= kChunkSize || !(args.inference_budget_ms > 0.0) ||
+        !(args.max_observation_age_ms > 0.0)) {
         throw std::invalid_argument("invalid LIBERO rollout argument");
     }
     check_horizons(args.rtc_inference_delay, args.rtc_execution_horizon, kChunkSize);
@@ -164,6 +168,23 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
     const InferenceStats &inference = loop.inference_stats();
     const ConsumerStats &queue = loop.queue().consumer_stats();
     const SafetyStats &safety_stats = safety.stats();
+    const double wall_seconds = std::chrono::duration<double>(wall_time).count();
+    const double control_rate_hz = wall_seconds > 0.0 ? sink.emissions / wall_seconds : 0.0;
+    const double simulator_rate_hz =
+        wall_seconds > 0.0 ? sim.commands_applied / wall_seconds : 0.0;
+    const std::uint64_t resolved_commands = sim.commands_applied + sim.commands_superseded;
+    const double command_delivery = resolved_commands > 0
+                                        ? static_cast<double>(sim.commands_applied) /
+                                              static_cast<double>(resolved_commands)
+                                        : 0.0;
+    const double minimum_simulator_rate_hz = 0.95 * args.control_hz;
+    const bool control_cadence_live = control_rate_hz >= minimum_simulator_rate_hz;
+    const bool simulator_throughput_live = simulator_rate_hz >= minimum_simulator_rate_hz;
+    const bool command_delivery_live = command_delivery >= 0.99;
+    const bool inference_live = inference.generation_failed == 0;
+    const bool freshness_live = loop.metrics().staleness_violations == 0;
+    const bool runtime_live = control_cadence_live && simulator_throughput_live &&
+                              command_delivery_live && inference_live && freshness_live;
     out << std::boolalpha << std::fixed << std::setprecision(3) << "{\n"
         << "  \"model\": \"" << args.model << "\",\n"
         << "  \"suite\": \"" << args.suite << "\",\n"
@@ -173,6 +194,8 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "  \"device\": \"" << args.device << "\",\n"
       << "  \"control_hz\": " << args.control_hz << ",\n"
       << "  \"control_period_ms\": " << config.control_period_ms() << ",\n"
+      << "  \"inference_budget_ms\": " << config.inference_budget_ms << ",\n"
+      << "  \"max_staleness_ms\": " << kMaxStalenessMs << ",\n"
       << "  \"refresh_trigger\": " << config.effective_refresh_trigger() << ",\n"
       << "  \"rtc_inference_delay\": " << loop.queue().inference_delay() << ",\n"
       << "  \"rtc_execution_horizon\": " << loop.queue().execution_horizon() << ",\n"
@@ -202,6 +225,19 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "    \"clamped\": " << safety_stats.action_clamped << ",\n"
         << "    \"stale_rejected\": " << safety_stats.stale_rejected << "\n"
         << "  },\n"
+        << "  \"liveness\": {\n"
+        << "    \"control_rate_hz\": " << control_rate_hz << ",\n"
+        << "    \"simulator_step_rate_hz\": " << simulator_rate_hz << ",\n"
+        << "    \"command_delivery_fraction\": " << command_delivery << ",\n"
+        << "    \"minimum_rate_hz\": " << minimum_simulator_rate_hz << ",\n"
+        << "    \"minimum_delivery_fraction\": 0.990,\n"
+        << "    \"control_cadence_pass\": " << control_cadence_live << ",\n"
+        << "    \"simulator_throughput_pass\": " << simulator_throughput_live << ",\n"
+        << "    \"command_delivery_pass\": " << command_delivery_live << ",\n"
+        << "    \"inference_pass\": " << inference_live << ",\n"
+        << "    \"freshness_pass\": " << freshness_live << ",\n"
+        << "    \"runtime_pass\": " << runtime_live << "\n"
+        << "  },\n"
         << "  \"simulator_healthy\": " << simulator.healthy() << "\n"
         << "}\n";
 }
@@ -226,6 +262,7 @@ int main(int argc, char **argv) {
 
         RuntimeConfig config;
         config.control_period = Nanos{1'000'000'000 / args.control_hz};
+        config.inference_budget_ms = args.inference_budget_ms;
         config.action_dim = simulator.action_dim();
         config.action_space = ActionSpace::Delta;
         config.stitching = args.stitching;
