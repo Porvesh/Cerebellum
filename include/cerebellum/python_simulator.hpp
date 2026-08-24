@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -16,6 +17,7 @@
 namespace cerebellum {
 
 enum class PythonSimulatorBackend { Synthetic, Libero };
+enum class SimulatorDelivery { LatestOnly, Acknowledged };
 
 struct SimulatorImageSpec {
   std::string feature_name;
@@ -28,6 +30,7 @@ struct PythonSimulatorOptions {
   std::string python_executable = "python3";
   std::string python_package_path = "python";
   PythonSimulatorBackend backend = PythonSimulatorBackend::Synthetic;
+  SimulatorDelivery delivery = SimulatorDelivery::LatestOnly;
   std::string suite = "libero_spatial";
   int task_id = 0;
   int init_state = 0;
@@ -49,6 +52,9 @@ struct SimulatorStats {
   std::uint64_t commands_superseded = 0;
   std::uint64_t observations = 0;
   std::uint64_t transport_errors = 0;
+  std::uint64_t environment_step_ns = 0;
+  std::uint64_t observation_build_ns = 0;
+  std::uint64_t cpp_round_trip_ns = 0;
   bool terminated = false;
   bool success = false;
 };
@@ -59,7 +65,9 @@ struct SimulatorStats {
 //   simulator worker          -> Python/MuJoCo -> newest observation snapshot
 //   inference worker          -> atomic newest observation snapshot
 //
-// emit() therefore satisfies ActionSink's no-wait/no-I/O/no-allocation rule.
+// LatestOnly emit() therefore satisfies ActionSink's no-wait/no-I/O/no-allocation
+// rule. Acknowledged delivery deliberately waits and is restricted to
+// slower-than-real-time evaluation.
 class PythonSimulatorAdapter final : public ActionSink,
                                      public ObservationSource {
 public:
@@ -135,6 +143,15 @@ private:
   std::atomic<std::uint64_t> transport_errors_{0};
   std::atomic<bool> terminated_{false};
   std::atomic<bool> success_{false};
+
+  // Used only by acknowledged simulation. The control thread waits here while
+  // the simulator worker performs one command; real-time delivery never locks.
+  mutable std::mutex acknowledgement_mutex_;
+  std::condition_variable acknowledgement_cv_;
+
+  std::atomic<std::uint64_t> environment_step_ns_{0};
+  std::atomic<std::uint64_t> observation_build_ns_{0};
+  std::atomic<std::uint64_t> cpp_round_trip_ns_{0};
 
   mutable std::mutex error_mutex_;
   std::string last_error_;

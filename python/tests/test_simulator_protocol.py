@@ -49,12 +49,16 @@ def test_simulator_messages_round_trip() -> None:
                 "observation.images.image", 3, 2, 3, np.arange(18, dtype=np.uint8)
             ),
         ),
+        123,
+        456,
     )
     decoded = decode_observation(encode_observation(observation))
     assert decoded.sequence == 12
     assert decoded.sim_step == 4
     assert decoded.reward == pytest.approx(1.25)
     assert decoded.terminated and not decoded.success
+    assert decoded.environment_step_ns == 123
+    assert decoded.observation_build_ns == 456
     np.testing.assert_array_equal(decoded.state, observation.state)
     np.testing.assert_array_equal(decoded.images[0].pixels, observation.images[0].pixels)
 

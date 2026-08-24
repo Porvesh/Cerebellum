@@ -71,6 +71,11 @@ class ActionSink {
     virtual void emit(const ActionEmission &emission) noexcept = 0;
 };
 
+// RealTime follows the fixed wall-clock grid and skips obsolete steps after a
+// deadline overrun. SynchronousEvaluation advances exactly one absolute step
+// per sink acknowledgement; it is for slower-than-real-time simulators only.
+enum class ControlPacing { RealTime, SynchronousEvaluation };
+
 // Written only by the inference worker and read after run_for() joins it.
 struct InferenceStats {
     std::uint64_t requests = 0;
@@ -140,7 +145,8 @@ class RuntimeLoop {
     // Runs control on the calling thread and inference on one worker thread.
     // The first deadline is one period in the future, giving the worker one
     // period to begin the initial inference without changing the fixed grid.
-    void run_for(std::size_t max_ticks) {
+    void run_for(std::size_t max_ticks,
+                 ControlPacing pacing = ControlPacing::RealTime) {
         if (started_.exchange(true)) {
             throw std::logic_error("RuntimeLoop is single-use");
         }
@@ -149,6 +155,18 @@ class RuntimeLoop {
         // thread that observed running()==true can no longer be overwritten by
         // startup initialization.
         running_.store(true, std::memory_order_release);
+
+        if (pacing == ControlPacing::SynchronousEvaluation) {
+            for (std::size_t tick = 0;
+                 tick < max_ticks && !stop_.load(std::memory_order_acquire); ++tick) {
+                const auto step = static_cast<std::int64_t>(tick);
+                control_tick(step, now());
+            }
+            request_stop();
+            join_worker();
+            running_.store(false, std::memory_order_release);
+            return;
+        }
 
         const TimePoint origin = now() + cfg_.control_period;
         const ScheduleClock schedule(origin, cfg_.control_period);

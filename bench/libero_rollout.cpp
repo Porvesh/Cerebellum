@@ -34,6 +34,7 @@ struct Arguments {
     double max_observation_age_ms = 1000.0;
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Continuous;
+    ControlPacing pacing = ControlPacing::RealTime;
     bool local_files_only = true;
 };
 
@@ -95,6 +96,14 @@ Arguments parse_arguments(int argc, char **argv) {
             else
                 throw std::invalid_argument(
                     "--refresh-policy must be tail, continuous, or horizon");
+        } else if (arg == "--mode") {
+            const std::string_view name = value(arg);
+            if (name == "realtime")
+                args.pacing = ControlPacing::RealTime;
+            else if (name == "synchronous")
+                args.pacing = ControlPacing::SynchronousEvaluation;
+            else
+                throw std::invalid_argument("--mode must be realtime or synchronous");
         } else if (arg == "--osmesa-library-path") {
             args.osmesa_library_path = value(arg);
         } else if (arg == "--output") {
@@ -185,6 +194,14 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
     const bool freshness_live = loop.metrics().staleness_violations == 0;
     const bool runtime_live = control_cadence_live && simulator_throughput_live &&
                               command_delivery_live && inference_live && freshness_live;
+    const bool synchronous = args.pacing == ControlPacing::SynchronousEvaluation;
+    const bool evaluation_pipeline_pass =
+        sim.commands_applied == sink.emissions && sim.commands_superseded == 0 && inference_live;
+    const double applied = static_cast<double>(sim.commands_applied);
+    const double environment_step_ms = applied > 0.0 ? sim.environment_step_ns / applied / 1e6 : 0.0;
+    const double observation_build_ms =
+        applied > 0.0 ? sim.observation_build_ns / applied / 1e6 : 0.0;
+    const double cpp_round_trip_ms = applied > 0.0 ? sim.cpp_round_trip_ns / applied / 1e6 : 0.0;
     out << std::boolalpha << std::fixed << std::setprecision(3) << "{\n"
         << "  \"model\": \"" << args.model << "\",\n"
         << "  \"suite\": \"" << args.suite << "\",\n"
@@ -192,6 +209,7 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "  \"init_state\": " << args.init_state << ",\n"
         << "  \"task\": \"" << simulator.task() << "\",\n"
         << "  \"device\": \"" << args.device << "\",\n"
+        << "  \"mode\": \"" << (synchronous ? "synchronous" : "realtime") << "\",\n"
       << "  \"control_hz\": " << args.control_hz << ",\n"
       << "  \"control_period_ms\": " << config.control_period_ms() << ",\n"
       << "  \"inference_budget_ms\": " << config.inference_budget_ms << ",\n"
@@ -222,10 +240,17 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "    \"staleness_violations\": " << loop.metrics().staleness_violations << "\n"
         << "  },\n"
         << "  \"safety\": {\n"
+        << "    \"wall_clock_observation_age_applicable\": " << !synchronous << ",\n"
         << "    \"clamped\": " << safety_stats.action_clamped << ",\n"
         << "    \"stale_rejected\": " << safety_stats.stale_rejected << "\n"
         << "  },\n"
+        << "  \"simulator_timing_mean_ms\": {\n"
+        << "    \"environment_step_including_render\": " << environment_step_ms << ",\n"
+        << "    \"observation_build\": " << observation_build_ms << ",\n"
+        << "    \"cpp_command_to_observation\": " << cpp_round_trip_ms << "\n"
+        << "  },\n"
         << "  \"liveness\": {\n"
+        << "    \"real_time_applicable\": " << !synchronous << ",\n"
         << "    \"control_rate_hz\": " << control_rate_hz << ",\n"
         << "    \"simulator_step_rate_hz\": " << simulator_rate_hz << ",\n"
         << "    \"command_delivery_fraction\": " << command_delivery << ",\n"
@@ -236,7 +261,8 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "    \"command_delivery_pass\": " << command_delivery_live << ",\n"
         << "    \"inference_pass\": " << inference_live << ",\n"
         << "    \"freshness_pass\": " << freshness_live << ",\n"
-        << "    \"runtime_pass\": " << runtime_live << "\n"
+        << "    \"runtime_pass\": " << (!synchronous && runtime_live) << ",\n"
+        << "    \"evaluation_pipeline_pass\": " << evaluation_pipeline_pass << "\n"
         << "  },\n"
         << "  \"simulator_healthy\": " << simulator.healthy() << "\n"
         << "}\n";
@@ -252,6 +278,9 @@ int main(int argc, char **argv) {
         simulator_options.python_executable = CEREBELLUM_LIBERO_PYTHON;
         simulator_options.python_package_path = CEREBELLUM_LIBERO_PYTHONPATH;
         simulator_options.backend = PythonSimulatorBackend::Libero;
+        simulator_options.delivery = args.pacing == ControlPacing::SynchronousEvaluation
+                                         ? SimulatorDelivery::Acknowledged
+                                         : SimulatorDelivery::LatestOnly;
         simulator_options.suite = args.suite;
         simulator_options.task_id = args.task_id;
         simulator_options.init_state = args.init_state;
@@ -300,14 +329,20 @@ int main(int argc, char **argv) {
             safety_config.max_action[static_cast<std::size_t>(d)] = 1.0F;
         }
         safety_config.replacement_action[6] = -1.0F;
-        safety_config.max_observation_age = std::chrono::duration_cast<Nanos>(
-            std::chrono::duration<double, std::milli>(args.max_observation_age_ms));
+        // In synchronous evaluation, wall time intentionally runs slower than
+        // simulated policy time. The observation is still the latest simulator
+        // state, so deployment wall-clock age must be measured but not rejected.
+        safety_config.max_observation_age =
+            args.pacing == ControlPacing::SynchronousEvaluation
+                ? Nanos::max()
+                : std::chrono::duration_cast<Nanos>(
+                      std::chrono::duration<double, std::milli>(args.max_observation_age_ms));
         ActionSafetyFilter safety(safety_config);
         MeasuredSimulatorSink sink(simulator);
         RuntimeLoop loop(config, generator, sink, static_cast<std::size_t>(args.ticks),
                          std::chrono::microseconds(100), &safety);
         const TimePoint started = now();
-        loop.run_for(static_cast<std::size_t>(args.ticks));
+        loop.run_for(static_cast<std::size_t>(args.ticks), args.pacing);
         const Nanos wall_time = now() - started;
 
         if (!simulator.healthy() && !simulator.last_error().empty()) {

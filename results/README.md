@@ -73,6 +73,32 @@ loosened to make the simulator pass.
 - [`libero_smolvla_gpu3_discard.json`](libero_smolvla_gpu3_discard.json)
 - [`libero_liveness_gpu3_smoke.json`](libero_liveness_gpu3_smoke.json)
 
+### Synchronous LIBERO evaluation
+
+The same task then ran for all 300 policy steps in synchronous mode. This mode
+advances the C++ absolute step only after the simulator acknowledges the current
+action, so it measures policy behavior without pretending that CPU OSMesa is
+real-time. All 300 emitted commands were applied in order, none were
+superseded, all 150 inference requests succeeded, and the evaluation pipeline
+passed. Deployment freshness is reported but is explicitly inapplicable to this
+slower-than-real-time mode; its wall-clock age is not used to reject actions.
+
+The 30 simulated seconds took 59.331 wall-clock seconds and the task succeeded.
+Episode success is sticky: later motion cannot erase the fact that LIBERO's
+success condition was reached earlier. This changes the interpretation of the
+real-time failure: SmolVLA can solve this task when every selected action is
+applied, and dropping roughly half the trajectory was consequential.
+
+The new stage timings locate the throughput problem: LIBERO `env.step()`
+including camera rendering averaged 195.890 ms/action, observation construction
+averaged 0.962 ms/action, and the complete C++ command to decoded-observation
+round trip averaged 197.603 ms/action. Nearly all of the time is inside the
+simulator environment step, not Cerebellum IPC or image copying. The safety
+filter clamped 166 actions without rejecting any, which is the next policy-path
+issue to investigate.
+
+- [`libero_synchronous_gpu3_discard.json`](libero_synchronous_gpu3_discard.json)
+
 ## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action

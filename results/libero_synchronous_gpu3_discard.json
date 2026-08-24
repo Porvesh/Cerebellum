@@ -1,0 +1,63 @@
+{
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "suite": "libero_spatial",
+  "task_id": 0,
+  "init_state": 0,
+  "task": "pick up the black bowl between the plate and the ramekin and place it on the plate",
+  "device": "cuda",
+  "mode": "synchronous",
+  "control_hz": 10,
+  "control_period_ms": 100.000,
+  "inference_budget_ms": 300.000,
+  "max_staleness_ms": 350.000,
+  "refresh_trigger": 4,
+  "rtc_inference_delay": 3,
+  "rtc_execution_horizon": 3,
+  "stitching": "discard",
+  "ticks_requested": 300,
+  "wall_time_ms": 59330.798,
+  "success": true,
+  "terminated": true,
+  "counts": {
+    "control_emissions": 300,
+    "fallback_actions": 2,
+    "safety_modified": 166,
+    "safety_rejections": 0,
+    "simulator_commands_applied": 300,
+    "simulator_commands_superseded": 0,
+    "simulator_observations": 301,
+    "inference_requests": 150,
+    "chunks_generated": 150,
+    "generation_failures": 0,
+    "chunks_accepted": 149,
+    "real_actions": 298,
+    "underruns": 2,
+    "staleness_violations": 291
+  },
+  "safety": {
+    "wall_clock_observation_age_applicable": false,
+    "clamped": 166,
+    "stale_rejected": 0
+  },
+  "simulator_timing_mean_ms": {
+    "environment_step_including_render": 195.890,
+    "observation_build": 0.962,
+    "cpp_command_to_observation": 197.603
+  },
+  "liveness": {
+    "real_time_applicable": false,
+    "control_rate_hz": 5.056,
+    "simulator_step_rate_hz": 5.056,
+    "command_delivery_fraction": 1.000,
+    "minimum_rate_hz": 9.500,
+    "minimum_delivery_fraction": 0.990,
+    "control_cadence_pass": false,
+    "simulator_throughput_pass": false,
+    "command_delivery_pass": true,
+    "inference_pass": true,
+    "freshness_pass": false,
+    "runtime_pass": false,
+    "evaluation_pipeline_pass": true
+  },
+  "simulator_healthy": true
+}

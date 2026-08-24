@@ -126,6 +126,36 @@ void test_runtime_closes_observation_inference_action_loop() {
   CHECK(simulator.latest()->sequence > 0);
 }
 
+void test_synchronous_runtime_applies_every_action_in_order() {
+  auto value = options();
+  value.delivery = SimulatorDelivery::Acknowledged;
+  PythonSimulatorAdapter simulator(value);
+  RuntimeConfig config;
+  config.control_period = std::chrono::milliseconds(1);
+  config.inference_budget_ms = 1.0;
+  config.action_dim = 7;
+  config.action_space = ActionSpace::Delta;
+  PythonChunkGeneratorOptions generator_options;
+  generator_options.python_executable = CEREBELLUM_TEST_PYTHON;
+  generator_options.python_package_path = CEREBELLUM_TEST_PYTHONPATH;
+  generator_options.startup_timeout = std::chrono::seconds(5);
+  generator_options.inference_timeout = std::chrono::seconds(5);
+  PythonChunkGenerator generator(config, simulator, generator_options);
+  RuntimeLoop loop(config, generator, simulator, 20,
+                   std::chrono::microseconds(20));
+
+  loop.run_for(20, ControlPacing::SynchronousEvaluation);
+
+  const SimulatorStats stats = simulator.stats();
+  CHECK(stats.commands_emitted == 20);
+  CHECK(stats.commands_applied == 20);
+  CHECK(stats.commands_superseded == 0);
+  CHECK(simulator.latest()->sequence == 20);
+  CHECK(stats.environment_step_ns > 0);
+  CHECK(stats.observation_build_ns > 0);
+  CHECK(stats.cpp_round_trip_ns > 0);
+}
+
 void test_real_libero_when_requested() {
   const char *enabled = std::getenv("CEREBELLUM_RUN_LIBERO_SIMULATOR");
   if (!enabled || std::string(enabled) != "1")
@@ -156,6 +186,7 @@ int main() {
   test_emit_is_applied_by_worker_and_publishes_observation();
   test_latest_action_wins_without_blocking_control();
   test_runtime_closes_observation_inference_action_loop();
+  test_synchronous_runtime_applies_every_action_in_order();
   test_real_libero_when_requested();
   if (g_failures == 0) {
     std::printf("test_python_simulator: all checks passed\n");

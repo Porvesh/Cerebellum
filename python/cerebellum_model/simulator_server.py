@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 from pathlib import Path
 import sys
@@ -80,10 +81,18 @@ class SyntheticSimulator:
     def step(self, command: SimulatorCommand) -> SimulatorObservation:
         if command.action.shape != (self.hello.action_dim,):
             raise ValueError("synthetic action dimension mismatch")
+        step_started = monotonic_ns()
         self._sim_step += 1
         copy_count = min(self._state.size, command.action.size)
         self._state[:copy_count] += command.action[:copy_count]
-        return self._observation(command.sequence, float(command.action.sum()))
+        environment_step_ns = monotonic_ns() - step_started
+        build_started = monotonic_ns()
+        observation = self._observation(command.sequence, float(command.action.sum()))
+        return replace(
+            observation,
+            environment_step_ns=environment_step_ns,
+            observation_build_ns=monotonic_ns() - build_started,
+        )
 
     def close(self) -> None:
         pass
@@ -196,10 +205,20 @@ class LiberoSimulator:
     def step(self, command: SimulatorCommand) -> SimulatorObservation:
         if command.action.shape != (7,):
             raise ValueError("LIBERO action dimension mismatch")
+        step_started = monotonic_ns()
         self._raw, reward, done, _ = self._env.step(command.action)
+        environment_step_ns = monotonic_ns() - step_started
         self._sim_step += 1
         success = bool(self._env.check_success())
-        return self._convert(command.sequence, float(reward), bool(done or success), success)
+        build_started = monotonic_ns()
+        observation = self._convert(
+            command.sequence, float(reward), bool(done or success), success
+        )
+        return replace(
+            observation,
+            environment_step_ns=environment_step_ns,
+            observation_build_ns=monotonic_ns() - build_started,
+        )
 
     def close(self) -> None:
         self._env.close()

@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from .protocol import ProtocolError
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 HELLO_MAGIC = b"CBSH"
 COMMAND_MAGIC = b"CBSC"
@@ -19,7 +19,7 @@ OBSERVATION_MAGIC = b"CBSO"
 _HELLO = struct.Struct(">4sHBBHHHI")
 _IMAGE_SPEC = struct.Struct(">HHHH")
 _COMMAND = struct.Struct(">4sHBBQqH")
-_OBSERVATION = struct.Struct(">4sHBBQQqfBBHHI")
+_OBSERVATION = struct.Struct(">4sHBBQQqfBBHHQQI")
 _IMAGE = struct.Struct(">HHHHI")
 
 
@@ -65,6 +65,8 @@ class SimulatorObservation:
     success: bool
     state: NDArray[np.float32]
     images: tuple[SimulatorImage, ...]
+    environment_step_ns: int = 0
+    observation_build_ns: int = 0
 
 
 def encode_hello(hello: SimulatorHello) -> bytes:
@@ -189,6 +191,8 @@ def encode_observation(observation: SimulatorObservation) -> bytes:
             observation.success,
             state.size,
             len(observation.images),
+            observation.environment_step_ns,
+            observation.observation_build_ns,
             0,
         )
     )
@@ -224,6 +228,8 @@ def encode_observation_error(sequence: int, message: str) -> bytes:
         False,
         0,
         0,
+        0,
+        0,
         len(detail),
     ) + detail
 
@@ -244,6 +250,8 @@ def decode_observation(payload: bytes) -> SimulatorObservation:
         success,
         state_dim,
         image_count,
+        environment_step_ns,
+        observation_build_ns,
         detail_size,
     ) = _OBSERVATION.unpack_from(payload)
     if magic != OBSERVATION_MAGIC or version != PROTOCOL_VERSION:
@@ -288,4 +296,6 @@ def decode_observation(payload: bytes) -> SimulatorObservation:
         bool(success),
         state,
         tuple(images),
+        environment_step_ns,
+        observation_build_ns,
     )

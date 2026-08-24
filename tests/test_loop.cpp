@@ -249,6 +249,23 @@ void test_slow_control_skips_expired_steps() {
     }
 }
 
+void test_synchronous_control_preserves_every_step() {
+    RuntimeConfig cfg = small_config();
+    FailingGenerator generator;
+    RecordingSink sink(5, std::chrono::milliseconds(2));
+    RuntimeLoop loop(cfg, generator, sink, 5, std::chrono::microseconds(25));
+    seed(loop, /*count=*/12, /*first=*/0.0f, /*delta=*/1.0f);
+
+    loop.run_for(5, ControlPacing::SynchronousEvaluation);
+
+    CHECK(sink.emissions.size() == 5);
+    CHECK(loop.queue().consumer_stats().steps_skipped == 0);
+    for (std::size_t i = 0; i < sink.emissions.size(); ++i) {
+        CHECK(sink.emissions[i].step == static_cast<std::int64_t>(i));
+        CHECK(sink.emissions[i].action[0] == static_cast<float>(i));
+    }
+}
+
 void test_safety_runs_before_emit_and_fallback_history() {
     RuntimeConfig cfg = small_config();
     FailingGenerator generator;
@@ -297,6 +314,7 @@ int main() {
     test_rtc_retains_and_aligns_model_prefix_on_worker();
     test_underrun_policies();
     test_slow_control_skips_expired_steps();
+    test_synchronous_control_preserves_every_step();
     test_safety_runs_before_emit_and_fallback_history();
     test_external_stop_joins_both_loops();
 

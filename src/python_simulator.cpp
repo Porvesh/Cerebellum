@@ -22,7 +22,7 @@ extern char **environ;
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 1;
+constexpr std::uint16_t kProtocolVersion = 2;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBSH";
 constexpr std::string_view kCommandMagic = "CBSC";
@@ -237,6 +237,7 @@ PythonSimulatorAdapter::PythonSimulatorAdapter(PythonSimulatorOptions options)
 
 PythonSimulatorAdapter::~PythonSimulatorAdapter() {
   stop_.store(true, std::memory_order_release);
+  acknowledgement_cv_.notify_all();
   if (worker_.joinable())
     worker_.join();
   stop_child();
@@ -256,7 +257,19 @@ void PythonSimulatorAdapter::emit(const ActionEmission &emission) noexcept {
         bits, std::memory_order_relaxed);
   }
   mailbox_version_.store(version + 2, std::memory_order_release);
-  commands_emitted_.fetch_add(1, std::memory_order_relaxed);
+  const std::uint64_t target =
+      commands_emitted_.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (options_.delivery == SimulatorDelivery::Acknowledged) {
+    try {
+      std::unique_lock lock(acknowledgement_mutex_);
+      acknowledgement_cv_.wait(lock, [this, target] {
+        return commands_applied_.load(std::memory_order_acquire) >= target ||
+               !healthy() || stop_.load(std::memory_order_acquire);
+      });
+    } catch (...) {
+      transport_error("waiting for simulator acknowledgement failed");
+    }
+  }
 }
 
 std::shared_ptr<const ObservationSnapshot>
@@ -271,6 +284,9 @@ SimulatorStats PythonSimulatorAdapter::stats() const noexcept {
       commands_superseded_.load(std::memory_order_relaxed),
       observations_.load(std::memory_order_relaxed),
       transport_errors_.load(std::memory_order_relaxed),
+      environment_step_ns_.load(std::memory_order_relaxed),
+      observation_build_ns_.load(std::memory_order_relaxed),
+      cpp_round_trip_ns_.load(std::memory_order_relaxed),
       terminated_.load(std::memory_order_relaxed),
       success_.load(std::memory_order_relaxed),
   };
@@ -351,6 +367,8 @@ PythonSimulatorAdapter::read_observation() {
     const bool success = reader.u8() != 0;
     const std::uint16_t state_dim = reader.u16();
     const std::uint16_t image_count = reader.u16();
+    const std::uint64_t environment_step_ns = reader.u64();
+    const std::uint64_t observation_build_ns = reader.u64();
     const std::uint32_t error_size = reader.u32();
     if (status != 0) {
       transport_error(std::string(reader.bytes(error_size)));
@@ -392,8 +410,12 @@ PythonSimulatorAdapter::read_observation() {
       throw std::runtime_error("simulator observation has trailing bytes");
     observation->task = task_;
     observation->validate();
-    terminated_.store(terminated, std::memory_order_relaxed);
-    success_.store(success, std::memory_order_relaxed);
+    // Episode outcomes are sticky: a later action must not erase the fact that
+    // the task succeeded or terminated at an earlier simulated step.
+    if (terminated) terminated_.store(true, std::memory_order_relaxed);
+    if (success) success_.store(true, std::memory_order_relaxed);
+    environment_step_ns_.fetch_add(environment_step_ns, std::memory_order_relaxed);
+    observation_build_ns_.fetch_add(observation_build_ns, std::memory_order_relaxed);
     return observation;
   } catch (const std::exception &exc) {
     transport_error(exc.what());
@@ -453,6 +475,7 @@ void PythonSimulatorAdapter::worker_loop() noexcept {
                                      std::memory_order_relaxed);
     }
     consumed = pending.publication;
+    const TimePoint round_trip_start = now();
     if (!write_command(pending))
       break;
     std::shared_ptr<const ObservationSnapshot> observation = read_observation();
@@ -461,9 +484,14 @@ void PythonSimulatorAdapter::worker_loop() noexcept {
     std::atomic_store_explicit(&latest_, std::move(observation),
                                std::memory_order_release);
     commands_applied_.fetch_add(1, std::memory_order_relaxed);
+    cpp_round_trip_ns_.fetch_add(
+        static_cast<std::uint64_t>((now() - round_trip_start).count()),
+        std::memory_order_relaxed);
     observations_.fetch_add(1, std::memory_order_relaxed);
+    acknowledgement_cv_.notify_all();
   }
   healthy_.store(false, std::memory_order_release);
+  acknowledgement_cv_.notify_all();
 }
 
 bool PythonSimulatorAdapter::write_frame(const void *data, std::size_t size) {
