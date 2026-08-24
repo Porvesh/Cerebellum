@@ -99,6 +99,24 @@ issue to investigate.
 
 - [`libero_synchronous_gpu3_discard.json`](libero_synchronous_gpu3_discard.json)
 
+### Real-time NVIDIA EGL rollout
+
+NVIDIA's 580.105.08 userspace EGL libraries were extracted into the user's home directory to
+match the loaded kernel driver; no root installation or render-group membership was required.
+On physical GPU 3, EGL reduced LIBERO `env.step()` including rendering from 195.890 ms/action
+under CPU OSMesa to 41.925 ms/action. The complete command-to-observation round trip fell from
+197.603 ms to 43.326 ms. The simulator and C++ control loop both sustained exactly 10 Hz for the
+full 300-action episode, with 300/300 commands applied and none superseded.
+
+This removes simulator throughput as the explanation for the remaining failure. The real-time
+Discard rollout did not complete the task, and 295 of 298 model actions exceeded the 350 ms
+freshness bound. Synchronous evaluation succeeded because the roughly 300 ms model inference
+consumed fewer simulated action intervals there; in real time it produces only one fresh chunk
+per approximately three actions. RTC/inference freshness is now the next bottleneck. The safety
+filter also clamped 228 commands and rejected three stale commands.
+
+- [`libero_egl_gpu3_realtime_discard.json`](libero_egl_gpu3_realtime_discard.json)
+
 ## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action

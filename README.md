@@ -119,9 +119,23 @@ Install LIBERO into the existing project environment (no separate Conda environm
 python -m pip install -e '.[libero]'
 ```
 
-The real simulator test is opt-in. On a machine where EGL render-device access works, omit the
-OSMesa variable. This workstation instead uses a user-local extracted `libOSMesa.so` because no
-`sudo` or `/dev/dri/render*` access is available:
+The real simulator test is opt-in. This workstation has no `render`-group access and its system
+GLVND installation only exposes Mesa, but EGL still works without `sudo`: extract the NVIDIA
+userspace package matching the loaded kernel driver into a user-owned directory, then point
+GLVND at its vendor manifest. For physical GPU 3 and the local 580.105.08 payload:
+
+```bash
+CUDA_VISIBLE_DEVICES=3 \
+MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
+__EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/10_nvidia.json" \
+LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
+CEREBELLUM_RUN_LIBERO_SIMULATOR=1 \
+./build/test_python_simulator
+```
+
+The NVIDIA package is deliberately not committed. Its userspace version must match
+`/proc/driver/nvidia/version`; mixing driver versions can make EGL initialization fail. OSMesa
+remains the CPU fallback:
 
 ```bash
 CEREBELLUM_RUN_LIBERO_SIMULATOR=1 \
@@ -139,7 +153,9 @@ Run the LIBERO-trained SmolVLA checkpoint through the complete simulator loop:
 ```bash
 CUDA_VISIBLE_DEVICES=3 \
 HF_HOME="$HOME/.cache/cerebellum-hf" \
-CEREBELLUM_OSMESA_LIBRARY_PATH="$HOME/.local/lib/cerebellum-osmesa/usr/lib/x86_64-linux-gnu" \
+MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
+__EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/10_nvidia.json" \
+LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
 ./build/run_libero --ticks 300 --warmup-inferences 1 \
   --model HuggingFaceVLA/smolvla_libero
 ```
