@@ -124,6 +124,7 @@ static void test_defaults_are_valid() {
     CHECK(cfg.chunk_size == 50);
     CHECK(cfg.action_dim == 6);
     CHECK(cfg.stitching == Stitching::Discard);
+    CHECK(cfg.max_staleness_ms == 350.0);
     CHECK(cfg.control_period_ms() > 33.3 && cfg.control_period_ms() < 33.4);
     CHECK(cfg.effective_refresh_trigger() == 6);
     CHECK(cfg.effective_rtc_inference_delay() == 5);
@@ -148,6 +149,17 @@ static void test_ten_hz_derives_all_step_counts_from_one_period() {
 }
 
 static void test_validation_rejects_unusable_configs() {
+    {
+        RuntimeConfig cfg{};
+        cfg.max_staleness_ms = 0.0;
+        CHECK_THROWS(cfg.validate());
+    }
+    {
+        RuntimeConfig cfg{};
+        cfg.max_staleness_ms = 575.0;
+        cfg.validate();
+        CHECK(cfg.max_staleness_ms == 575.0);
+    }
     {
         RuntimeConfig cfg{};
         cfg.stitching = Stitching::Rtc;

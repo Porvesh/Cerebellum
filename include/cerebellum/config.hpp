@@ -103,6 +103,10 @@ struct RuntimeConfig {
     // Single source of truth for every duration-to-action-step conversion.
     std::chrono::nanoseconds control_period = kControlPeriod;
     double inference_budget_ms = kBudgetTargetMs;
+    // Deployment/profile requirement. The 30 Hz base profile retains the
+    // original 350 ms contract; slower checkpoints may set an evidence-backed
+    // bound without weakening every runtime configuration.
+    double max_staleness_ms = kMaxStalenessMs;
 
     int chunk_size = kChunkSize;
     int action_dim = kActionDim;

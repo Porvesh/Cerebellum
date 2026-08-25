@@ -122,7 +122,7 @@ class RuntimeLoop {
           generator_(generator),
           sink_(sink),
           queue_(cfg),
-          metrics_(metrics_capacity),
+          metrics_(metrics_capacity, 0, cfg.max_staleness_ms),
           worker_poll_period_(worker_poll_period),
           safety_filter_(safety_filter) {
         cfg_.validate();

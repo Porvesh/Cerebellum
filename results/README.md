@@ -108,12 +108,19 @@ under CPU OSMesa to 41.925 ms/action. The complete command-to-observation round 
 197.603 ms to 43.326 ms. The simulator and C++ control loop both sustained exactly 10 Hz for the
 full 300-action episode, with 300/300 commands applied and none superseded.
 
-This removes simulator throughput as the explanation for the remaining failure. The real-time
-Discard rollout did not complete the task, and 295 of 298 model actions exceeded the 350 ms
-freshness bound. Synchronous evaluation succeeded because the roughly 300 ms model inference
-consumed fewer simulated action intervals there; in real time it produces only one fresh chunk
-per approximately three actions. RTC/inference freshness is now the next bottleneck. The safety
-filter also clamped 228 commands and rejected three stale commands.
+This removes simulator throughput as the explanation for the remaining failure. An initial run
+showed that the old 350 ms bound was below normal operation, so the report now separates raw
+cold-start staleness from safety-eligible steady-state staleness. Across repeated 300-action runs,
+the latter measured about 457 ms p50, 558 ms p90, 561.5 ms p99, and 568.4 ms maximum. The LIBERO
+profile therefore uses 575 ms: the smallest round bound with scheduling margin above the observed
+maximum. The base 30 Hz profile remains at 350 ms.
+
+With the 575 ms target, all 295 safety-eligible actions passed. The only three violations were
+25-second-old startup observations captured before model loading completed; the safety filter
+rejected them independently. Synchronous evaluation succeeded because the roughly 300 ms model
+inference consumed fewer simulated action intervals there; in real time it produces only one
+fresh chunk per approximately three actions. Cold-start observation handling and RTC/inference
+freshness remain separate follow-up work.
 
 - [`libero_egl_gpu3_realtime_discard.json`](libero_egl_gpu3_realtime_discard.json)
 

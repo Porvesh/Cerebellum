@@ -285,6 +285,18 @@ static void test_control_metrics_count_the_invariants() {
     CHECK(m.lateness.percentile(99.0) == 0);   // all emitted exactly on time
 }
 
+static void test_control_metrics_use_profile_staleness_bound() {
+    const TimePoint capture = now();
+    ScheduleClock sched(capture + Nanos{static_cast<std::int64_t>(kBudgetTargetMs * 1e6)});
+    ControlMetrics metrics(8, 0, 575.0);
+
+    metrics.on_emit(synth_action(capture, sched, 7, 7, kBudgetTargetMs));
+    CHECK(metrics.staleness_violations == 0);  // ~379 ms is valid for this profile
+    metrics.on_emit(synth_action(capture, sched, 13, 13, kBudgetTargetMs));
+    CHECK(metrics.staleness_violations == 1);  // ~579 ms exceeds it
+    CHECK(metrics.max_staleness_ms() == 575.0);
+}
+
 int main() {
     test_percentiles_are_nearest_rank();
     test_percentiles_on_small_samples();
@@ -298,6 +310,7 @@ int main() {
     test_scoped_span_measures_work();
     test_staleness_accumulates_across_a_chunk();
     test_control_metrics_count_the_invariants();
+    test_control_metrics_use_profile_staleness_bound();
 
     if (g_failures == 0) {
         std::printf("test_timing: all checks passed\n");

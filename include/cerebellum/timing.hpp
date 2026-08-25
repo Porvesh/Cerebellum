@@ -324,8 +324,8 @@ struct ActionRecord {
         return (t_emit - chunk.t_infer_end).count();
     }
     double staleness_ms() const noexcept { return to_ms(staleness_ns()); }
-    bool within_staleness_bound() const noexcept {
-        return staleness_ms() <= kMaxStalenessMs;
+    bool within_staleness_bound(double bound_ms = kMaxStalenessMs) const noexcept {
+        return staleness_ms() <= bound_ms;
     }
 };
 
@@ -344,9 +344,10 @@ struct ControlMetrics {
     std::uint64_t underruns = 0;             // invariant #2
     std::uint64_t staleness_violations = 0;  // invariant #4
 
-    explicit ControlMetrics(std::size_t capacity, std::size_t warmup = 0)
+    explicit ControlMetrics(std::size_t capacity, std::size_t warmup = 0,
+                            double max_staleness_ms = kMaxStalenessMs)
         : lateness(capacity, warmup), staleness(capacity, warmup),
-          ready_to_emit(capacity, warmup) {}
+          ready_to_emit(capacity, warmup), max_staleness_ms_(max_staleness_ms) {}
 
     // One call per tick from the control thread. Allocation-free.
     void on_emit(const ActionRecord& rec) noexcept {
@@ -354,7 +355,7 @@ struct ControlMetrics {
         lateness.record(rec.lateness_ns());
         staleness.record(rec.staleness_ns());
         ready_to_emit.record(rec.ready_to_emit_ns());
-        if (!rec.within_staleness_bound()) ++staleness_violations;
+        if (!rec.within_staleness_bound(max_staleness_ms_)) ++staleness_violations;
     }
 
     // A tick the queue could not serve. Counted, and the tick still happened —
@@ -363,6 +364,8 @@ struct ControlMetrics {
         ++ticks;
         ++underruns;
     }
+
+    double max_staleness_ms() const noexcept { return max_staleness_ms_; }
 
     void print(std::FILE* out = stdout) {
         const Summary l = lateness.summarize();
@@ -379,8 +382,11 @@ struct ControlMetrics {
                      to_ms(l.max_ns), l.count);
         std::fprintf(out, "%-12s %8.3f %8.3f %8.3f %8.3f %8.3f   n=%zu  bound=%.1f\n",
                      "staleness", to_ms(s.p50_ns), to_ms(s.p90_ns), to_ms(s.p99_ns),
-                     to_ms(s.p999_ns), to_ms(s.max_ns), s.count, kMaxStalenessMs);
+                     to_ms(s.p999_ns), to_ms(s.max_ns), s.count, max_staleness_ms_);
     }
+
+private:
+    const double max_staleness_ms_;
 };
 
 // Every sample, not a summary — the committed CSV in results/ is what makes a

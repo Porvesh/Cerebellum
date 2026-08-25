@@ -168,6 +168,9 @@ future 30 Hz deployment must explicitly resample these delta actions; consuming 
 as fast changes their physical meaning and is not a valid evaluation.
 `RuntimeConfig::control_period` is the single runtime clock source: refresh floors, chunk duration,
 RTC delay/horizon defaults, safety timing, and measured inference-delay steps derive from it.
+Freshness is profile-specific: the base 30 Hz runtime retains its 350 ms requirement, while
+`run_libero` defaults to the measured 575 ms minimum for the 10 Hz LIBERO checkpoint. Override it
+explicitly with `--max-staleness-ms`; do not reuse the LIBERO value for a faster deployment.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

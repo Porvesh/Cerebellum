@@ -31,6 +31,7 @@ struct Arguments {
     int rtc_inference_delay = 0;
     int rtc_execution_horizon = 0;
     double inference_budget_ms = 300.0;
+    double max_staleness_ms = 575.0;
     double max_observation_age_ms = 1000.0;
     Stitching stitching = Stitching::Discard;
     RefreshPolicy refresh_policy = RefreshPolicy::Continuous;
@@ -75,6 +76,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.rtc_execution_horizon = std::stoi(std::string(value(arg)));
         } else if (arg == "--inference-budget-ms") {
             args.inference_budget_ms = std::stod(std::string(value(arg)));
+        } else if (arg == "--max-staleness-ms") {
+            args.max_staleness_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--max-observation-age-ms") {
             args.max_observation_age_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--stitching") {
@@ -117,6 +120,7 @@ Arguments parse_arguments(int argc, char **argv) {
     if (args.task_id < 0 || args.init_state < 0 || args.control_hz <= 0 || args.ticks <= 0 ||
         args.warmup_inferences < 0 || args.refresh_trigger < 0 ||
         args.refresh_trigger >= kChunkSize || !(args.inference_budget_ms > 0.0) ||
+        !(args.max_staleness_ms > 0.0) ||
         !(args.max_observation_age_ms > 0.0)) {
         throw std::invalid_argument("invalid LIBERO rollout argument");
     }
@@ -169,7 +173,7 @@ class MeasuredSimulatorSink final : public ActionSink {
     PythonSimulatorAdapter &simulator_;
 };
 
-void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
+void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
             const RuntimeConfig &config,
             const PythonSimulatorAdapter &simulator, const MeasuredSimulatorSink &sink,
             const ActionSafetyFilter &safety, Nanos wall_time) {
@@ -177,6 +181,16 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
     const InferenceStats &inference = loop.inference_stats();
     const ConsumerStats &queue = loop.queue().consumer_stats();
     const SafetyStats &safety_stats = safety.stats();
+    const Summary staleness = loop.metrics().staleness.summarize();
+    PercentileRecorder eligible_staleness(loop.metrics().staleness.size());
+    std::size_t cold_start_staleness = 0;
+    for (const std::int64_t sample : loop.metrics().staleness.samples()) {
+        if (to_ms(sample) <= args.max_observation_age_ms)
+            eligible_staleness.record(sample);
+        else
+            ++cold_start_staleness;
+    }
+    const Summary eligible = eligible_staleness.summarize();
     const double wall_seconds = std::chrono::duration<double>(wall_time).count();
     const double control_rate_hz = wall_seconds > 0.0 ? sink.emissions / wall_seconds : 0.0;
     const double simulator_rate_hz =
@@ -213,7 +227,7 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
       << "  \"control_hz\": " << args.control_hz << ",\n"
       << "  \"control_period_ms\": " << config.control_period_ms() << ",\n"
       << "  \"inference_budget_ms\": " << config.inference_budget_ms << ",\n"
-      << "  \"max_staleness_ms\": " << kMaxStalenessMs << ",\n"
+      << "  \"max_staleness_ms\": " << config.max_staleness_ms << ",\n"
       << "  \"refresh_trigger\": " << config.effective_refresh_trigger() << ",\n"
       << "  \"rtc_inference_delay\": " << loop.queue().inference_delay() << ",\n"
       << "  \"rtc_execution_horizon\": " << loop.queue().execution_horizon() << ",\n"
@@ -248,6 +262,22 @@ void report(std::ostream &out, const Arguments &args, const RuntimeLoop &loop,
         << "    \"environment_step_including_render\": " << environment_step_ms << ",\n"
         << "    \"observation_build\": " << observation_build_ms << ",\n"
         << "    \"cpp_command_to_observation\": " << cpp_round_trip_ms << "\n"
+        << "  },\n"
+        << "  \"action_staleness_ms\": {\n"
+        << "    \"samples\": " << staleness.count << ",\n"
+        << "    \"p50\": " << to_ms(staleness.p50_ns) << ",\n"
+        << "    \"p90\": " << to_ms(staleness.p90_ns) << ",\n"
+        << "    \"p99\": " << to_ms(staleness.p99_ns) << ",\n"
+        << "    \"max\": " << to_ms(staleness.max_ns) << "\n"
+        << "  },\n"
+        << "  \"safety_eligible_staleness_ms\": {\n"
+        << "    \"definition\": \"observation age within safety limit\",\n"
+        << "    \"samples\": " << eligible.count << ",\n"
+        << "    \"cold_start_or_rejected_samples\": " << cold_start_staleness << ",\n"
+        << "    \"p50\": " << to_ms(eligible.p50_ns) << ",\n"
+        << "    \"p90\": " << to_ms(eligible.p90_ns) << ",\n"
+        << "    \"p99\": " << to_ms(eligible.p99_ns) << ",\n"
+        << "    \"max\": " << to_ms(eligible.max_ns) << "\n"
         << "  },\n"
         << "  \"liveness\": {\n"
         << "    \"real_time_applicable\": " << !synchronous << ",\n"
@@ -292,6 +322,7 @@ int main(int argc, char **argv) {
         RuntimeConfig config;
         config.control_period = Nanos{1'000'000'000 / args.control_hz};
         config.inference_budget_ms = args.inference_budget_ms;
+        config.max_staleness_ms = args.max_staleness_ms;
         config.action_dim = simulator.action_dim();
         config.action_space = ActionSpace::Delta;
         config.stitching = args.stitching;

@@ -64,6 +64,9 @@ inline void RuntimeConfig::validate() const {
     if (!(inference_budget_ms > 0.0)) {
         throw std::invalid_argument("inference_budget_ms must be positive");
     }
+    if (!(max_staleness_ms > 0.0)) {
+        throw std::invalid_argument("max_staleness_ms must be positive");
+    }
     if (chunk_size <= 0) throw std::invalid_argument("chunk_size must be positive");
     if (action_dim <= 0) throw std::invalid_argument("action_dim must be positive");
     if (denoise_steps <= 0) throw std::invalid_argument("denoise_steps must be positive");
