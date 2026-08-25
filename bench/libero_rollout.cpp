@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -14,6 +15,8 @@
 using namespace cerebellum;
 
 namespace {
+
+constexpr int kLiberoActionDim = 7;
 
 struct Arguments {
     std::string model = "HuggingFaceVLA/smolvla_libero";
@@ -38,6 +41,48 @@ struct Arguments {
     ControlPacing pacing = ControlPacing::RealTime;
     bool local_files_only = true;
 };
+
+// The model process is loaded and warmed before LIBERO captures its initial
+// observation. During warm-up it sees a shape-correct dummy; before either
+// runtime thread starts, bind() permanently redirects reads to the simulator.
+class SwitchableObservationSource final : public ObservationSource {
+   public:
+    std::shared_ptr<const ObservationSnapshot> latest() noexcept override {
+        return delegate_ ? delegate_->latest() : fallback_;
+    }
+
+    void set_fallback(std::shared_ptr<const ObservationSnapshot> value) {
+        fallback_ = std::move(value);
+    }
+    void bind(ObservationSource &delegate) noexcept { delegate_ = &delegate; }
+
+   private:
+    std::shared_ptr<const ObservationSnapshot> fallback_;
+    ObservationSource *delegate_ = nullptr;
+};
+
+std::shared_ptr<const ObservationSnapshot> make_warmup_observation(
+    const WorkerObservationSchema &schema) {
+    if (!schema.constrained()) {
+        throw std::runtime_error("SmolVLA did not provide an observation schema");
+    }
+    auto observation = std::make_shared<ObservationSnapshot>();
+    observation->sequence = 0;
+    observation->capture_time = now();
+    observation->task = "LIBERO model warm-up";
+    observation->state.assign(schema.state_dim, 0.0F);
+    for (const WorkerImageSpec &expected : schema.images) {
+        CameraImage image;
+        image.feature_name = expected.feature_name;
+        image.channels = expected.channels;
+        image.height = expected.height;
+        image.width = expected.width;
+        image.pixels.resize(static_cast<std::size_t>(image.channels) * image.height * image.width);
+        observation->images.push_back(std::move(image));
+    }
+    observation->validate();
+    return observation;
+}
 
 Arguments parse_arguments(int argc, char **argv) {
     Arguments args;
@@ -173,6 +218,24 @@ class MeasuredSimulatorSink final : public ActionSink {
     PythonSimulatorAdapter &simulator_;
 };
 
+void write_clamp_diagnostics(std::ostream &out, const SafetyStats &stats, int action_dim) {
+    constexpr std::array<std::string_view, kLiberoActionDim> names{
+        "delta_x", "delta_y", "delta_z", "axis_angle_x",
+        "axis_angle_y", "axis_angle_z", "gripper",
+    };
+    out << "    \"clamp_by_dimension\": [\n";
+    for (int d = 0; d < action_dim; ++d) {
+        const std::size_t i = static_cast<std::size_t>(d);
+        out << "      {\"dimension\": " << d << ", \"name\": \"" << names[i]
+            << "\", \"below_min\": " << stats.requested_below_min[i]
+            << ", \"above_max\": " << stats.requested_above_max[i]
+            << ", \"max_excess\": " << stats.max_bound_excess[i] << "}";
+        if (d + 1 < action_dim) out << ',';
+        out << '\n';
+    }
+    out << "    ]\n";
+}
+
 void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
             const RuntimeConfig &config,
             const PythonSimulatorAdapter &simulator, const MeasuredSimulatorSink &sink,
@@ -256,8 +319,9 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
         << "  \"safety\": {\n"
         << "    \"wall_clock_observation_age_applicable\": " << !synchronous << ",\n"
         << "    \"clamped\": " << safety_stats.action_clamped << ",\n"
-        << "    \"stale_rejected\": " << safety_stats.stale_rejected << "\n"
-        << "  },\n"
+        << "    \"stale_rejected\": " << safety_stats.stale_rejected << ",\n";
+    write_clamp_diagnostics(out, safety_stats, config.action_dim);
+    out << "  },\n"
         << "  \"simulator_timing_mean_ms\": {\n"
         << "    \"environment_step_including_render\": " << environment_step_ms << ",\n"
         << "    \"observation_build\": " << observation_build_ms << ",\n"
@@ -304,6 +368,42 @@ int main(int argc, char **argv) {
     try {
         const Arguments args = parse_arguments(argc, argv);
 
+        RuntimeConfig config;
+        config.control_period = Nanos{1'000'000'000 / args.control_hz};
+        config.inference_budget_ms = args.inference_budget_ms;
+        config.max_staleness_ms = args.max_staleness_ms;
+        config.action_dim = kLiberoActionDim;
+        config.action_space = ActionSpace::Delta;
+        config.stitching = args.stitching;
+        config.refresh_policy = args.refresh_policy;
+        config.refresh_trigger = args.refresh_trigger;
+        config.queue_capacity = config.chunk_size + config.effective_refresh_trigger();
+        config.rtc.denoise_steps = args.rtc_denoise_steps;
+        config.rtc.inference_delay = args.rtc_inference_delay;
+        config.rtc.execution_horizon = args.rtc_execution_horizon;
+        config.validate();
+
+        SwitchableObservationSource observations;
+        PythonChunkGeneratorOptions generator_options;
+        generator_options.python_executable = CEREBELLUM_LIBERO_PYTHON;
+        generator_options.python_package_path = CEREBELLUM_LIBERO_PYTHONPATH;
+        generator_options.runner = PythonRunner::SmolVla;
+        generator_options.model = args.model;
+        generator_options.device = args.device;
+        generator_options.local_files_only = args.local_files_only;
+        generator_options.startup_timeout = std::chrono::minutes(15);
+        generator_options.inference_timeout = std::chrono::minutes(2);
+        PythonChunkGenerator generator(config, observations, generator_options);
+        observations.set_fallback(make_warmup_observation(generator.observation_schema()));
+
+        for (int i = 0; i < args.warmup_inferences; ++i) {
+            Chunk warmup;
+            if (!generator.generate(InferenceRequest{0, -1, config.chunk_size, args.stitching},
+                                    warmup)) {
+                throw std::runtime_error("model warmup failed: " + generator.last_error());
+            }
+        }
+
         PythonSimulatorOptions simulator_options;
         simulator_options.python_executable = CEREBELLUM_LIBERO_PYTHON;
         simulator_options.python_package_path = CEREBELLUM_LIBERO_PYTHONPATH;
@@ -318,41 +418,8 @@ int main(int argc, char **argv) {
         simulator_options.osmesa_library_path = args.osmesa_library_path;
         simulator_options.startup_timeout = std::chrono::minutes(2);
         PythonSimulatorAdapter simulator(simulator_options);
-
-        RuntimeConfig config;
-        config.control_period = Nanos{1'000'000'000 / args.control_hz};
-        config.inference_budget_ms = args.inference_budget_ms;
-        config.max_staleness_ms = args.max_staleness_ms;
-        config.action_dim = simulator.action_dim();
-        config.action_space = ActionSpace::Delta;
-        config.stitching = args.stitching;
-        config.refresh_policy = args.refresh_policy;
-        config.refresh_trigger = args.refresh_trigger;
-        config.queue_capacity = config.chunk_size + config.effective_refresh_trigger();
-        config.rtc.denoise_steps = args.rtc_denoise_steps;
-        config.rtc.inference_delay = args.rtc_inference_delay;
-        config.rtc.execution_horizon = args.rtc_execution_horizon;
-        config.validate();
-
-        PythonChunkGeneratorOptions generator_options;
-        generator_options.python_executable = CEREBELLUM_LIBERO_PYTHON;
-        generator_options.python_package_path = CEREBELLUM_LIBERO_PYTHONPATH;
-        generator_options.runner = PythonRunner::SmolVla;
-        generator_options.model = args.model;
-        generator_options.device = args.device;
-        generator_options.local_files_only = args.local_files_only;
-        generator_options.startup_timeout = std::chrono::minutes(15);
-        generator_options.inference_timeout = std::chrono::minutes(2);
-        PythonChunkGenerator generator(config, simulator, generator_options);
         validate_schema(simulator, generator.observation_schema());
-
-        for (int i = 0; i < args.warmup_inferences; ++i) {
-            Chunk warmup;
-            if (!generator.generate(InferenceRequest{0, -1, config.chunk_size, args.stitching},
-                                    warmup)) {
-                throw std::runtime_error("model warmup failed: " + generator.last_error());
-            }
-        }
+        observations.bind(simulator);
 
         SafetyConfig safety_config(config.action_dim);
         for (int d = 0; d < config.action_dim; ++d) {

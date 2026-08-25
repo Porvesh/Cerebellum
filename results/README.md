@@ -122,6 +122,21 @@ inference consumed fewer simulated action intervals there; in real time it produ
 fresh chunk per approximately three actions. Cold-start observation handling and RTC/inference
 freshness remain separate follow-up work.
 
+The model is now loaded and warmed against a schema-correct dummy observation before LIBERO is
+constructed. The following rollout therefore captured the real initial state after model startup:
+all 298 model actions were younger than the one-second safety limit and stale safety rejections
+fell from three to zero. A real scheduling tail remained—four actions exceeded 575 ms, with
+655.6 ms p99 and 755.6 ms maximum—so the report does not claim a freshness pass. Queue prefill
+and RTC should reduce that tail; increasing the requirement again from one outlier run would hide
+it.
+
+Per-dimension diagnostics also explain the high clamp count. Of 220 clamped ticks, the raw model
+crossed the gripper bound 215 times (75 below -1 and 140 above +1, maximum excess 0.049) and moved
+`delta_z` below -1 seven times (maximum excess 0.055). No x/y or rotation dimension crossed its
+bounds. SmolVLA mean/std unnormalization does not enforce environment bounds; Robosuite already
+clips controller input and the Panda gripper uses the action sign. Cerebellum's clamp is therefore
+the expected safety boundary rather than evidence of double-normalization.
+
 - [`libero_egl_gpu3_realtime_discard.json`](libero_egl_gpu3_realtime_discard.json)
 
 ## Discard refresh-policy baseline

@@ -41,6 +41,9 @@ void test_position_bounds_and_padded_tail() {
     CHECK(result.has(SafetyFlag::ActionClamped));
     CHECK(!result.rejected);
     CHECK(filter.stats().action_clamped == 1);
+    CHECK(filter.stats().requested_below_min[0] == 0);
+    CHECK(filter.stats().requested_above_max[0] == 1);
+    CHECK(filter.stats().max_bound_excess[0] == 7.0F);
 }
 
 void test_velocity_limit_uses_control_period() {

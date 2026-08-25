@@ -89,6 +89,11 @@ struct SafetyStats {
     std::uint64_t action_acceleration_limited = 0;
     std::uint64_t nonfinite_rejected = 0;
     std::uint64_t stale_rejected = 0;
+    // Raw requested-action bound diagnostics. These are per dimension, unlike
+    // action_clamped, which counts modified control ticks.
+    std::array<std::uint64_t, kPaddedActionDim> requested_below_min{};
+    std::array<std::uint64_t, kPaddedActionDim> requested_above_max{};
+    std::array<float, kPaddedActionDim> max_bound_excess{};
 };
 
 class ActionSafetyFilter {
@@ -150,6 +155,15 @@ class ActionSafetyFilter {
         const float seconds = std::chrono::duration<float>(period).count();
         for (int d = 0; d < config_.action_dim; ++d) {
             const std::size_t i = static_cast<std::size_t>(d);
+            if (result.action[i] < config_.min_action[i]) {
+                ++stats_.requested_below_min[i];
+                stats_.max_bound_excess[i] =
+                    std::max(stats_.max_bound_excess[i], config_.min_action[i] - result.action[i]);
+            } else if (result.action[i] > config_.max_action[i]) {
+                ++stats_.requested_above_max[i];
+                stats_.max_bound_excess[i] =
+                    std::max(stats_.max_bound_excess[i], result.action[i] - config_.max_action[i]);
+            }
             const float clamped =
                 std::clamp(result.action[i], config_.min_action[i], config_.max_action[i]);
             if (clamped != result.action[i]) {
