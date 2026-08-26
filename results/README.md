@@ -139,6 +139,36 @@ the expected safety boundary rather than evidence of double-normalization.
 
 - [`libero_egl_gpu3_realtime_discard.json`](libero_egl_gpu3_realtime_discard.json)
 
+### Matched Discard and RTC-5 videos
+
+The same real-time EGL setup recorded matched 300-action episodes for Discard and five-step RTC.
+Each MP4 contains the two observations seen by the policy plus per-action control metadata. Both
+runs applied all 300 commands and sustained the 9.5 Hz liveness floor, so this comparison is not
+confounded by the earlier CPU-rendering command loss.
+
+| Runtime metric | Discard | RTC, 5 denoising steps |
+|---|---:|---:|
+| Control rate | 10.000 Hz | 9.952 Hz |
+| Commands delivered | 300 / 300 | 300 / 300 |
+| Real actions / fallbacks | 298 / 2 | 299 / 1 |
+| Inference requests | 100 | 76 |
+| Staleness p50 | 457.0 ms | 568.0 ms |
+| Staleness p90 | 558.7 ms | 756.8 ms |
+| Staleness maximum | 667.1 ms | 901.2 ms |
+| Actions above 575 ms | 1 | 149 |
+| Task success | no | no |
+
+RTC is functional here, but it is not yet an improvement. Its autograd/VJP guidance makes each
+request more expensive; the horizon scheduler issued fewer requests, and the resulting actions
+were older. Freezing/inpainting improves transition consistency, not inference latency by itself.
+This result rules out presenting RTC-5 as deployment-ready and points to guided-inference latency
+or scheduling as the next functional bottleneck.
+
+- [`libero_realtime_discard.mp4`](libero_realtime_discard.mp4)
+- [`libero_realtime_rtc5.mp4`](libero_realtime_rtc5.mp4)
+- [`libero_realtime_discard_video.json`](libero_realtime_discard_video.json)
+- [`libero_realtime_rtc5_video.json`](libero_realtime_rtc5_video.json)
+
 ## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action

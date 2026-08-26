@@ -1,0 +1,88 @@
+{
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "suite": "libero_spatial",
+  "task_id": 0,
+  "init_state": 0,
+  "task": "pick up the black bowl between the plate and the ramekin and place it on the plate",
+  "device": "cuda",
+  "mode": "realtime",
+  "control_hz": 10,
+  "control_period_ms": 100.000,
+  "inference_budget_ms": 300.000,
+  "max_staleness_ms": 575.000,
+  "refresh_trigger": 4,
+  "rtc_inference_delay": 3,
+  "rtc_execution_horizon": 3,
+  "stitching": "discard",
+  "ticks_requested": 300,
+  "wall_time_ms": 30000.379,
+  "success": false,
+  "terminated": false,
+  "counts": {
+    "control_emissions": 300,
+    "fallback_actions": 2,
+    "safety_modified": 228,
+    "safety_rejections": 0,
+    "simulator_commands_applied": 300,
+    "simulator_commands_superseded": 0,
+    "simulator_observations": 301,
+    "inference_requests": 100,
+    "chunks_generated": 100,
+    "generation_failures": 0,
+    "chunks_accepted": 100,
+    "real_actions": 298,
+    "underruns": 2,
+    "staleness_violations": 1
+  },
+  "safety": {
+    "wall_clock_observation_age_applicable": true,
+    "clamped": 228,
+    "stale_rejected": 0,
+    "clamp_by_dimension": [
+      {"dimension": 0, "name": "delta_x", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 1, "name": "delta_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 2, "name": "delta_z", "below_min": 4, "above_max": 0, "max_excess": 0.056},
+      {"dimension": 3, "name": "axis_angle_x", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 4, "name": "axis_angle_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 5, "name": "axis_angle_z", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 6, "name": "gripper", "below_min": 71, "above_max": 154, "max_excess": 0.042}
+    ]
+  },
+  "simulator_timing_mean_ms": {
+    "environment_step_including_render": 41.318,
+    "observation_build": 0.884,
+    "cpp_command_to_observation": 43.793
+  },
+  "action_staleness_ms": {
+    "samples": 298,
+    "p50": 457.014,
+    "p90": 558.686,
+    "p99": 567.939,
+    "max": 667.149
+  },
+  "safety_eligible_staleness_ms": {
+    "definition": "observation age within safety limit",
+    "samples": 298,
+    "cold_start_or_rejected_samples": 0,
+    "p50": 457.014,
+    "p90": 558.686,
+    "p99": 567.939,
+    "max": 667.149
+  },
+  "liveness": {
+    "real_time_applicable": true,
+    "control_rate_hz": 10.000,
+    "simulator_step_rate_hz": 10.000,
+    "command_delivery_fraction": 1.000,
+    "minimum_rate_hz": 9.500,
+    "minimum_delivery_fraction": 0.990,
+    "control_cadence_pass": true,
+    "simulator_throughput_pass": true,
+    "command_delivery_pass": true,
+    "inference_pass": true,
+    "freshness_pass": false,
+    "runtime_pass": false,
+    "evaluation_pipeline_pass": true
+  },
+  "simulator_healthy": true
+}

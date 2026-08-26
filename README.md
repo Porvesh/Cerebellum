@@ -113,10 +113,11 @@ worker owns Python and MuJoCo I/O, applies the newest command, and atomically pu
 immutable 8D-state/two-camera observation for inference. This closes the same control → robot →
 observation loop a physical robot adapter will eventually implement.
 
-Install LIBERO into the existing project environment (no separate Conda environment is needed):
+Install LIBERO into the existing project environment (no separate Conda environment is needed).
+Include the `video` extra to enable MP4 rollout recording:
 
 ```bash
-python -m pip install -e '.[libero]'
+python -m pip install -e '.[libero,video]'
 ```
 
 The real simulator test is opt-in. This workstation has no `render`-group access and its system
@@ -157,7 +158,8 @@ MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
 __EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/10_nvidia.json" \
 LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
 ./build/run_libero --ticks 300 --warmup-inferences 1 \
-  --model HuggingFaceVLA/smolvla_libero
+  --model HuggingFaceVLA/smolvla_libero \
+  --video results/libero_realtime_discard.mp4
 ```
 
 The executable validates the checkpoint's 8D state, two-camera, and 7D action schema before
@@ -171,6 +173,9 @@ RTC delay/horizon defaults, safety timing, and measured inference-delay steps de
 Freshness is profile-specific: the base 30 Hz runtime retains its 350 ms requirement, while
 `run_libero` defaults to the measured 575 ms minimum for the 10 Hz LIBERO checkpoint. Override it
 explicitly with `--max-staleness-ms`; do not reuse the LIBERO value for a faster deployment.
+`--video` is optional. It records both policy cameras side by side at the control rate and overlays
+the stitching mode, action/simulator steps, observation age, safety flags, fallback/rejection, and
+task success. Recording happens on the simulator I/O worker, never on the real-time control thread.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

@@ -24,6 +24,7 @@ struct Arguments {
     std::string suite = "libero_spatial";
     std::string osmesa_library_path;
     std::string output;
+    std::string video;
     int task_id = 0;
     int init_state = 0;
     int control_hz = 10;
@@ -156,6 +157,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.osmesa_library_path = value(arg);
         } else if (arg == "--output") {
             args.output = value(arg);
+        } else if (arg == "--video") {
+            args.video = value(arg);
         } else if (arg == "--allow-download") {
             args.local_files_only = false;
         } else {
@@ -416,6 +419,10 @@ int main(int argc, char **argv) {
         simulator_options.init_state = args.init_state;
         simulator_options.control_hz = args.control_hz;
         simulator_options.osmesa_library_path = args.osmesa_library_path;
+        simulator_options.video_path = args.video;
+        simulator_options.video_label =
+            std::string(args.stitching == Stitching::Rtc ? "RTC" : "Discard") + " | " +
+            (args.pacing == ControlPacing::SynchronousEvaluation ? "synchronous" : "real-time");
         simulator_options.startup_timeout = std::chrono::minutes(2);
         PythonSimulatorAdapter simulator(simulator_options);
         validate_schema(simulator, generator.observation_schema());

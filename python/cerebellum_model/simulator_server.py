@@ -37,6 +37,80 @@ class SimulatorBackend(Protocol):
     def close(self) -> None: ...
 
 
+class VideoRecorder:
+    """Writes both policy cameras and control metadata into one MP4."""
+
+    def __init__(self, path: str, label: str, fps: int) -> None:
+        try:
+            import cv2
+            import imageio.v2 as imageio
+        except ImportError as exc:
+            raise RuntimeError(
+                "video recording requires the cerebellum-model[video] extra"
+            ) from exc
+
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        self._cv2 = cv2
+        self._label = label
+        self._writer = imageio.get_writer(
+            destination,
+            fps=fps,
+            codec="libx264",
+            quality=8,
+            macro_block_size=None,
+            ffmpeg_log_level="error",
+        )
+
+    @staticmethod
+    def _safety_names(flags: int) -> str:
+        names = []
+        for bit, name in (
+            (1 << 0, "clamp"),
+            (1 << 1, "rate"),
+            (1 << 2, "accel"),
+            (1 << 3, "nonfinite"),
+            (1 << 4, "stale"),
+        ):
+            if flags & bit:
+                names.append(name)
+        return "+".join(names) if names else "none"
+
+    def write(self, observation: SimulatorObservation, command: SimulatorCommand) -> None:
+        frames = [
+            image.pixels.reshape(image.height, image.width, image.channels)
+            for image in observation.images
+        ]
+        height = max(frame.shape[0] for frame in frames)
+        padded = []
+        for frame in frames:
+            if frame.shape[0] < height:
+                frame = np.pad(frame, ((0, height - frame.shape[0]), (0, 0), (0, 0)))
+            padded.append(frame)
+        cameras = np.concatenate(padded, axis=1)
+        canvas = np.zeros((height + 64, cameras.shape[1], 3), dtype=np.uint8)
+        canvas[64:] = cameras
+        status = "SUCCESS" if observation.success else "running"
+        line1 = (
+            f"{self._label} | action {command.step} | sim {observation.sim_step} | {status}"
+        )
+        line2 = (
+            f"obs {command.observation_age_ns / 1e6:.1f} ms | "
+            f"safety {self._safety_names(command.safety_flags)} | "
+            f"fallback {command.fallback} | rejected {command.safety_rejected}"
+        )
+        self._cv2.putText(
+            canvas, line1, (8, 24), self._cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1
+        )
+        self._cv2.putText(
+            canvas, line2, (8, 50), self._cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 220, 255), 1
+        )
+        self._writer.append_data(canvas)
+
+    def close(self) -> None:
+        self._writer.close()
+
+
 class SyntheticSimulator:
     def __init__(self, *, action_dim: int = 7, image_size: int = 8) -> None:
         self.hello = SimulatorHello(
@@ -239,8 +313,11 @@ def _backend(args: argparse.Namespace) -> SimulatorBackend:
 def serve(args: argparse.Namespace) -> None:
     source = sys.stdin.buffer
     sink = sys.stdout.buffer
+    recorder: VideoRecorder | None = None
     try:
         simulator = _backend(args)
+        if args.video_path:
+            recorder = VideoRecorder(args.video_path, args.video_label, args.control_hz)
     except Exception as exc:
         write_frame(sink, encode_hello_error(str(exc)))
         return
@@ -252,12 +329,17 @@ def serve(args: argparse.Namespace) -> None:
             command: SimulatorCommand | None = None
             try:
                 command = decode_command(payload)
-                response = encode_observation(simulator.step(command))
+                observation = simulator.step(command)
+                if recorder is not None:
+                    recorder.write(observation, command)
+                response = encode_observation(observation)
             except Exception as exc:
                 sequence = command.sequence if command is not None else 0
                 response = encode_observation_error(sequence, str(exc))
             write_frame(sink, response)
     finally:
+        if recorder is not None:
+            recorder.close()
         simulator.close()
 
 
@@ -270,6 +352,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task-id", type=int, default=0)
     parser.add_argument("--init-state", type=int, default=0)
     parser.add_argument("--control-hz", type=int, default=30)
+    parser.add_argument("--video-path", default="")
+    parser.add_argument("--video-label", default="")
     return parser.parse_args(argv)
 
 

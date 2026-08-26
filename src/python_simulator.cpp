@@ -22,7 +22,7 @@ extern char **environ;
 namespace cerebellum {
 namespace {
 
-constexpr std::uint16_t kProtocolVersion = 2;
+constexpr std::uint16_t kProtocolVersion = 3;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBSH";
 constexpr std::string_view kCommandMagic = "CBSC";
@@ -169,6 +169,10 @@ PythonSimulatorAdapter::PythonSimulatorAdapter(PythonSimulatorOptions options)
       std::to_string(options_.init_state),
       "--control-hz",
       std::to_string(options_.control_hz),
+      "--video-path",
+      options_.video_path,
+      "--video-label",
+      options_.video_label,
   };
   std::vector<char *> argv;
   argv.reserve(arguments.size() + 1);
@@ -249,6 +253,11 @@ void PythonSimulatorAdapter::emit(const ActionEmission &emission) noexcept {
     ++version;
   mailbox_version_.store(version + 1, std::memory_order_release);
   mailbox_step_.store(emission.step, std::memory_order_relaxed);
+  mailbox_observation_age_ns_.store(emission.observation_age.count(),
+                                    std::memory_order_relaxed);
+  mailbox_safety_flags_.store(emission.safety_flags, std::memory_order_relaxed);
+  mailbox_fallback_.store(emission.fallback, std::memory_order_relaxed);
+  mailbox_safety_rejected_.store(emission.safety_rejected, std::memory_order_relaxed);
   for (int d = 0; d < action_dim_; ++d) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &emission.action[static_cast<std::size_t>(d)],
@@ -425,13 +434,18 @@ PythonSimulatorAdapter::read_observation() {
 
 bool PythonSimulatorAdapter::write_command(const PendingAction &pending) {
   std::string payload;
-  payload.reserve(26 + static_cast<std::size_t>(action_dim_) * sizeof(float));
+  payload.reserve(40 + static_cast<std::size_t>(action_dim_) * sizeof(float));
   payload.append(kCommandMagic);
   append_u16(payload, kProtocolVersion);
   payload.push_back('\0');
   payload.push_back('\0');
   append_u64(payload, pending.publication / 2);
   append_u64(payload, static_cast<std::uint64_t>(pending.step));
+  append_u64(payload, static_cast<std::uint64_t>(
+                          std::max<std::int64_t>(0, pending.observation_age_ns)));
+  append_u32(payload, pending.safety_flags);
+  payload.push_back(pending.fallback ? '\1' : '\0');
+  payload.push_back(pending.safety_rejected ? '\1' : '\0');
   append_u16(payload, static_cast<std::uint16_t>(action_dim_));
   for (int d = 0; d < action_dim_; ++d) {
     append_f32(payload, pending.action[static_cast<std::size_t>(d)]);
@@ -448,6 +462,11 @@ bool PythonSimulatorAdapter::load_pending(
       return false;
     pending.publication = before;
     pending.step = mailbox_step_.load(std::memory_order_relaxed);
+    pending.observation_age_ns =
+        mailbox_observation_age_ns_.load(std::memory_order_relaxed);
+    pending.safety_flags = mailbox_safety_flags_.load(std::memory_order_relaxed);
+    pending.fallback = mailbox_fallback_.load(std::memory_order_relaxed);
+    pending.safety_rejected = mailbox_safety_rejected_.load(std::memory_order_relaxed);
     for (int d = 0; d < action_dim_; ++d) {
       const std::uint32_t bits =
           mailbox_action_[static_cast<std::size_t>(d)].load(

@@ -41,6 +41,8 @@ struct PythonSimulatorOptions {
   // where EGL device access is unavailable. The child environment alone is
   // changed; Cerebellum's process and other Python workers are untouched.
   std::string osmesa_library_path;
+  std::string video_path;
+  std::string video_label;
   std::chrono::milliseconds startup_timeout{120'000};
   std::chrono::milliseconds step_timeout{30'000};
   std::chrono::microseconds worker_poll_period{100};
@@ -96,6 +98,10 @@ private:
   struct PendingAction {
     std::uint64_t publication = 0;
     std::int64_t step = 0;
+    std::int64_t observation_age_ns = 0;
+    std::uint32_t safety_flags = 0;
+    bool fallback = false;
+    bool safety_rejected = false;
     Action action{};
   };
 
@@ -126,6 +132,10 @@ private:
   // Odd means a write is in progress; even values identify publications.
   alignas(64) std::atomic<std::uint64_t> mailbox_version_{0};
   std::atomic<std::int64_t> mailbox_step_{0};
+  std::atomic<std::int64_t> mailbox_observation_age_ns_{0};
+  std::atomic<std::uint32_t> mailbox_safety_flags_{0};
+  std::atomic<bool> mailbox_fallback_{false};
+  std::atomic<bool> mailbox_safety_rejected_{false};
   std::array<std::atomic<std::uint32_t>, kPaddedActionDim> mailbox_action_{};
 
   // GCC 11 does not expose atomic<shared_ptr>'s C++20 specialization, but the

@@ -12,6 +12,7 @@ dependencies = ["numpy>=2.0,<3"]
 [project.optional-dependencies]
 smolvla = ["lerobot[smolvla]==0.4.4"]
 libero = ["lerobot[libero]==0.4.4"]
+video = ["imageio[ffmpeg]>=2.34,<3", "opencv-python-headless>=4.10,<5"]
 test = ["pytest>=8,<10"]
 
 [tool.setuptools]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -19,7 +20,7 @@ from cerebellum_model.simulator_protocol import (
     encode_hello,
     encode_observation,
 )
-from cerebellum_model.simulator_server import SyntheticSimulator, parse_args, serve
+from cerebellum_model.simulator_server import SyntheticSimulator, VideoRecorder, parse_args, serve
 
 
 def test_simulator_messages_round_trip() -> None:
@@ -31,9 +32,20 @@ def test_simulator_messages_round_trip() -> None:
     )
     assert decode_hello(encode_hello(hello)) == hello
 
-    command = SimulatorCommand(12, 44, np.arange(7, dtype=np.float32))
+    command = SimulatorCommand(
+        12,
+        44,
+        np.arange(7, dtype=np.float32),
+        observation_age_ns=456_000_000,
+        safety_flags=3,
+        fallback=True,
+        safety_rejected=False,
+    )
     decoded_command = decode_command(encode_command(command))
     assert (decoded_command.sequence, decoded_command.step) == (12, 44)
+    assert decoded_command.observation_age_ns == 456_000_000
+    assert decoded_command.safety_flags == 3
+    assert decoded_command.fallback and not decoded_command.safety_rejected
     np.testing.assert_array_equal(decoded_command.action, command.action)
 
     observation = SimulatorObservation(
@@ -114,3 +126,20 @@ def test_quaternion_conversion_matches_expected_rotation() -> None:
         np.array([0.0, 0.0, np.pi / 2]),
         rtol=1e-5,
     )
+
+
+def test_video_recorder_writes_side_by_side_mp4(tmp_path: Path) -> None:
+    simulator = SyntheticSimulator(action_dim=7, image_size=16)
+    command = SimulatorCommand(
+        1,
+        7,
+        np.zeros(7, dtype=np.float32),
+        observation_age_ns=123_000_000,
+        safety_flags=1,
+    )
+    output = tmp_path / "episode.mp4"
+    recorder = VideoRecorder(str(output), "test", 10)
+    recorder.write(simulator.step(command), command)
+    recorder.write(simulator.step(command), command)
+    recorder.close()
+    assert output.stat().st_size > 0

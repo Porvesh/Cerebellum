@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from .protocol import ProtocolError
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 HELLO_MAGIC = b"CBSH"
 COMMAND_MAGIC = b"CBSC"
@@ -18,7 +18,7 @@ OBSERVATION_MAGIC = b"CBSO"
 
 _HELLO = struct.Struct(">4sHBBHHHI")
 _IMAGE_SPEC = struct.Struct(">HHHH")
-_COMMAND = struct.Struct(">4sHBBQqH")
+_COMMAND = struct.Struct(">4sHBBQqQIBBH")
 _OBSERVATION = struct.Struct(">4sHBBQQqfBBHHQQI")
 _IMAGE = struct.Struct(">HHHHI")
 
@@ -44,6 +44,10 @@ class SimulatorCommand:
     sequence: int
     step: int
     action: NDArray[np.float32]
+    observation_age_ns: int = 0
+    safety_flags: int = 0
+    fallback: bool = False
+    safety_rejected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +156,10 @@ def encode_command(command: SimulatorCommand) -> bytes:
         0,
         command.sequence,
         command.step,
+        command.observation_age_ns,
+        command.safety_flags,
+        command.fallback,
+        command.safety_rejected,
         action.size,
     ) + action.astype(">f4", copy=False).tobytes()
 
@@ -159,7 +167,19 @@ def encode_command(command: SimulatorCommand) -> bytes:
 def decode_command(payload: bytes) -> SimulatorCommand:
     if len(payload) < _COMMAND.size:
         raise ProtocolError("simulator command is truncated")
-    magic, version, status, _, sequence, step, action_dim = _COMMAND.unpack_from(payload)
+    (
+        magic,
+        version,
+        status,
+        _,
+        sequence,
+        step,
+        observation_age_ns,
+        safety_flags,
+        fallback,
+        safety_rejected,
+        action_dim,
+    ) = _COMMAND.unpack_from(payload)
     if magic != COMMAND_MAGIC or version != PROTOCOL_VERSION or status != 0:
         raise ProtocolError("bad simulator command header")
     expected = _COMMAND.size + action_dim * 4
@@ -168,7 +188,15 @@ def decode_command(payload: bytes) -> SimulatorCommand:
     action = np.frombuffer(payload, dtype=">f4", offset=_COMMAND.size).astype(np.float32)
     if not np.isfinite(action).all():
         raise ProtocolError("simulator action contains non-finite values")
-    return SimulatorCommand(sequence, step, action)
+    return SimulatorCommand(
+        sequence,
+        step,
+        action,
+        observation_age_ns,
+        safety_flags,
+        bool(fallback),
+        bool(safety_rejected),
+    )
 
 
 def encode_observation(observation: SimulatorObservation) -> bytes:
