@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -132,15 +134,20 @@ inline void write_replay_actions_csv(std::ostream &out,
     if (action_dim <= 0 || action_dim > kPaddedActionDim) {
         throw std::invalid_argument("replay CSV action_dim is invalid");
     }
-    out << "step,deadline_offset_ns,emit_offset_ns,fallback,observation_age_ns,safety_flags,"
-           "safety_rejected";
+    out << "step,chunk_id,chunk_index,chunk_boundary,deadline_offset_ns,emit_offset_ns,fallback,"
+           "observation_age_ns,safety_flags,safety_rejected";
     for (int d = 0; d < action_dim; ++d) out << ",action_" << d;
     out << '\n';
     if (records.empty()) return;
 
     const TimePoint origin = records.front().emission.deadline;
+    std::uint64_t previous_chunk_id = 0;
     for (const ReplayActionRecord &record : records) {
-        out << record.emission.step << ',' << (record.emission.deadline - origin).count() << ','
+        const std::uint64_t chunk_id = record.emission.chunk_id;
+        const bool chunk_boundary = chunk_id != 0 && chunk_id != previous_chunk_id;
+        out << record.emission.step << ',' << chunk_id << ',' << record.emission.chunk_index << ','
+            << (chunk_boundary ? 1 : 0) << ','
+            << (record.emission.deadline - origin).count() << ','
             << (record.emitted_at - origin).count() << ','
             << (record.emission.fallback ? 1 : 0) << ','
             << record.emission.observation_age.count() << ',' << record.emission.safety_flags << ','
@@ -149,7 +156,62 @@ inline void write_replay_actions_csv(std::ostream &out,
             out << ',' << record.emission.action[static_cast<std::size_t>(d)];
         }
         out << '\n';
+        if (chunk_id != 0) previous_chunk_id = chunk_id;
     }
+}
+
+// Discrete finite differences of the commands that actually crossed the
+// safety boundary. They are kept in millionths of action units so the common
+// integer percentile recorder can preserve their full distributions.
+struct ActionSmoothnessSummary {
+    static constexpr std::int64_t kScale = 1'000'000;
+    Summary first_difference_linf{};
+    Summary second_difference_linf{};
+    Summary third_difference_linf{};
+};
+
+inline ActionSmoothnessSummary summarize_action_smoothness(
+    const std::vector<ReplayActionRecord> &records, int action_dim) {
+    if (action_dim <= 0 || action_dim > kPaddedActionDim) {
+        throw std::invalid_argument("action smoothness action_dim is invalid");
+    }
+    PercentileRecorder first(records.size());
+    PercentileRecorder second(records.size());
+    PercentileRecorder third(records.size());
+    const auto valid_window = [&](std::size_t end, std::size_t length) {
+        for (std::size_t offset = 0; offset < length; ++offset) {
+            const ActionEmission &emission = records[end - offset].emission;
+            if (emission.fallback || emission.safety_rejected) return false;
+            if (offset > 0 &&
+                records[end - offset + 1].emission.step != emission.step + 1) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto record_difference = [&](PercentileRecorder &recorder, std::size_t end,
+                                       int order) {
+        double linf = 0.0;
+        for (int d = 0; d < action_dim; ++d) {
+            const std::size_t dim = static_cast<std::size_t>(d);
+            double value = 0.0;
+            for (int k = 0; k <= order; ++k) {
+                // (-1)^k C(order, k), for the three orders supported here.
+                static constexpr int coefficients[4][4] = {
+                    {1, 0, 0, 0}, {1, -1, 0, 0}, {1, -2, 1, 0}, {1, -3, 3, -1}};
+                value += coefficients[order][k] *
+                         records[end - static_cast<std::size_t>(k)].emission.action[dim];
+            }
+            linf = std::max(linf, std::abs(value));
+        }
+        recorder.record(static_cast<std::int64_t>(linf * ActionSmoothnessSummary::kScale + 0.5));
+    };
+    for (std::size_t i = 1; i < records.size(); ++i) {
+        if (valid_window(i, 2)) record_difference(first, i, 1);
+        if (i >= 2 && valid_window(i, 3)) record_difference(second, i, 2);
+        if (i >= 3 && valid_window(i, 4)) record_difference(third, i, 3);
+    }
+    return ActionSmoothnessSummary{first.summarize(), second.summarize(), third.summarize()};
 }
 
 }  // namespace cerebellum

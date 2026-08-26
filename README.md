@@ -159,7 +159,8 @@ __EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/1
 LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
 ./build/run_libero --ticks 300 --warmup-inferences 1 \
   --model HuggingFaceVLA/smolvla_libero \
-  --video results/libero_realtime_discard.mp4
+  --video results/libero_realtime_discard.mp4 \
+  --actions-csv results/libero_realtime_discard_actions.csv
 ```
 
 The executable validates the checkpoint's 8D state, two-camera, and 7D action schema before
@@ -176,6 +177,9 @@ explicitly with `--max-staleness-ms`; do not reuse the LIBERO value for a faster
 `--video` is optional. It records both policy cameras side by side at the control rate and overlays
 the stitching mode, action/simulator steps, observation age, safety flags, fallback/rejection, and
 task success. Recording happens on the simulator I/O worker, never on the real-time control thread.
+`--actions-csv` is also optional. It records the safety-filtered command, source chunk ID/index,
+and an exact chunk-boundary marker after control stops. The JSON report always summarizes the
+executed-command first/second/third finite differences and the queue's raw chunk-boundary jump.
 
 Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
 

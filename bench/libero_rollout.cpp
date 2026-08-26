@@ -7,10 +7,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "cerebellum/action_safety.hpp"
 #include "cerebellum/python_chunk_generator.hpp"
 #include "cerebellum/python_simulator.hpp"
+#include "cerebellum/replay.hpp"
 
 using namespace cerebellum;
 
@@ -25,6 +27,7 @@ struct Arguments {
     std::string osmesa_library_path;
     std::string output;
     std::string video;
+    std::string actions_csv;
     int task_id = 0;
     int init_state = 0;
     int control_hz = 10;
@@ -159,6 +162,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.output = value(arg);
         } else if (arg == "--video") {
             args.video = value(arg);
+        } else if (arg == "--actions-csv") {
+            args.actions_csv = value(arg);
         } else if (arg == "--allow-download") {
             args.local_files_only = false;
         } else {
@@ -169,7 +174,8 @@ Arguments parse_arguments(int argc, char **argv) {
         args.warmup_inferences < 0 || args.refresh_trigger < 0 ||
         args.refresh_trigger >= kChunkSize || !(args.inference_budget_ms > 0.0) ||
         !(args.max_staleness_ms > 0.0) ||
-        !(args.max_observation_age_ms > 0.0)) {
+        !(args.max_observation_age_ms > 0.0) ||
+        (!args.output.empty() && args.output == args.actions_csv)) {
         throw std::invalid_argument("invalid LIBERO rollout argument");
     }
     check_horizons(args.rtc_inference_delay, args.rtc_execution_horizon, kChunkSize);
@@ -202,15 +208,25 @@ void validate_schema(const PythonSimulatorAdapter &simulator,
 
 class MeasuredSimulatorSink final : public ActionSink {
    public:
-    explicit MeasuredSimulatorSink(PythonSimulatorAdapter &simulator) : simulator_(simulator) {}
+    MeasuredSimulatorSink(PythonSimulatorAdapter &simulator, std::size_t capacity)
+        : simulator_(simulator) {
+        records_.reserve(capacity);
+    }
 
     void emit(const ActionEmission &emission) noexcept override {
         ++emissions;
         if (emission.fallback) ++fallbacks;
         if (emission.safety_rejected) ++safety_rejections;
         if (emission.safety_flags != 0) ++safety_modified;
+        if (records_.size() < records_.capacity())
+            records_.push_back(ReplayActionRecord{emission, now()});
+        else
+            ++dropped_records_;
         simulator_.emit(emission);
     }
+
+    const std::vector<ReplayActionRecord> &records() const noexcept { return records_; }
+    std::uint64_t dropped_records() const noexcept { return dropped_records_; }
 
     std::uint64_t emissions = 0;
     std::uint64_t fallbacks = 0;
@@ -219,7 +235,21 @@ class MeasuredSimulatorSink final : public ActionSink {
 
    private:
     PythonSimulatorAdapter &simulator_;
+    std::vector<ReplayActionRecord> records_;
+    std::uint64_t dropped_records_ = 0;
 };
+
+void write_action_summary(std::ostream &out, std::string_view name, const Summary &summary,
+                          bool trailing_comma = true) {
+    constexpr double scale = static_cast<double>(ActionSmoothnessSummary::kScale);
+    out << "    \"" << name << "\": {\"samples\": " << summary.count
+        << ", \"p50\": " << summary.p50_ns / scale
+        << ", \"p90\": " << summary.p90_ns / scale
+        << ", \"p99\": " << summary.p99_ns / scale
+        << ", \"max\": " << summary.max_ns / scale << "}";
+    if (trailing_comma) out << ',';
+    out << '\n';
+}
 
 void write_clamp_diagnostics(std::ostream &out, const SafetyStats &stats, int action_dim) {
     constexpr std::array<std::string_view, kLiberoActionDim> names{
@@ -248,6 +278,9 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
     const ConsumerStats &queue = loop.queue().consumer_stats();
     const SafetyStats &safety_stats = safety.stats();
     const Summary staleness = loop.metrics().staleness.summarize();
+    const ActionSmoothnessSummary smoothness =
+        summarize_action_smoothness(sink.records(), config.action_dim);
+    const Summary chunk_seam = loop.queue().seam_linf().summarize();
     PercentileRecorder eligible_staleness(loop.metrics().staleness.size());
     std::size_t cold_start_staleness = 0;
     for (const std::int64_t sample : loop.metrics().staleness.samples()) {
@@ -316,6 +349,7 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
         << "    \"generation_failures\": " << inference.generation_failed << ",\n"
         << "    \"chunks_accepted\": " << queue.chunks_accepted << ",\n"
         << "    \"real_actions\": " << sink.emissions - sink.fallbacks << ",\n"
+        << "    \"action_records_dropped\": " << sink.dropped_records() << ",\n"
         << "    \"underruns\": " << loop.metrics().underruns << ",\n"
         << "    \"staleness_violations\": " << loop.metrics().staleness_violations << "\n"
         << "  },\n"
@@ -346,6 +380,15 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
         << "    \"p99\": " << to_ms(eligible.p99_ns) << ",\n"
         << "    \"max\": " << to_ms(eligible.max_ns) << "\n"
         << "  },\n"
+        << "  \"action_smoothness\": {\n"
+        << "    \"definition\": \"L-infinity finite differences of consecutive, "
+           "safety-filtered real commands per control tick; fallbacks and rejected windows "
+           "excluded\",\n";
+    write_action_summary(out, "first_difference_linf", smoothness.first_difference_linf);
+    write_action_summary(out, "second_difference_linf", smoothness.second_difference_linf);
+    write_action_summary(out, "third_difference_linf", smoothness.third_difference_linf);
+    write_action_summary(out, "chunk_boundary_raw_linf", chunk_seam, false);
+    out << "  },\n"
         << "  \"liveness\": {\n"
         << "    \"real_time_applicable\": " << !synchronous << ",\n"
         << "    \"control_rate_hz\": " << control_rate_hz << ",\n"
@@ -443,7 +486,7 @@ int main(int argc, char **argv) {
                 : std::chrono::duration_cast<Nanos>(
                       std::chrono::duration<double, std::milli>(args.max_observation_age_ms));
         ActionSafetyFilter safety(safety_config);
-        MeasuredSimulatorSink sink(simulator);
+        MeasuredSimulatorSink sink(simulator, static_cast<std::size_t>(args.ticks));
         RuntimeLoop loop(config, generator, sink, static_cast<std::size_t>(args.ticks),
                          std::chrono::microseconds(100), &safety);
         const TimePoint started = now();
@@ -452,6 +495,13 @@ int main(int argc, char **argv) {
 
         if (!simulator.healthy() && !simulator.last_error().empty()) {
             throw std::runtime_error("simulator failed: " + simulator.last_error());
+        }
+        if (!args.actions_csv.empty()) {
+            std::ofstream actions(args.actions_csv);
+            if (!actions) {
+                throw std::runtime_error("cannot open action CSV: " + args.actions_csv);
+            }
+            write_replay_actions_csv(actions, sink.records(), config.action_dim);
         }
         if (args.output.empty()) {
             report(std::cout, args, loop, config, simulator, sink, safety, wall_time);

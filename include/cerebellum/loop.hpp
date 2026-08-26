@@ -61,6 +61,8 @@ struct ActionEmission {
     Nanos observation_age{};
     std::uint32_t safety_flags = 0;
     bool safety_rejected = false;
+    std::uint64_t chunk_id = 0;
+    int chunk_index = -1;
 };
 
 // Called on the control thread. Implementations must not block, allocate, or
@@ -227,8 +229,17 @@ class RuntimeLoop {
         // Fallback history contains only the action that actually passed the
         // safety boundary, never the raw model prediction.
         remember(action);
-        sink_.emit(ActionEmission{step, deadline, action, !available, observation_age,
-                                  safety_flags, safety_rejected});
+        sink_.emit(ActionEmission{
+            step,
+            deadline,
+            action,
+            !available,
+            observation_age,
+            safety_flags,
+            safety_rejected,
+            available ? record.chunk.chunk_id : 0,
+            available ? record.index : -1,
+        });
     }
 
     Action fallback_action() const noexcept {

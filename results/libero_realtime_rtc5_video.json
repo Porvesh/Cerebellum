@@ -15,65 +15,73 @@
   "rtc_execution_horizon": 4,
   "stitching": "rtc",
   "ticks_requested": 300,
-  "wall_time_ms": 30146.169,
+  "wall_time_ms": 30157.074,
   "success": false,
   "terminated": false,
   "counts": {
     "control_emissions": 300,
     "fallback_actions": 1,
-    "safety_modified": 142,
+    "safety_modified": 165,
     "safety_rejections": 0,
-    "simulator_commands_applied": 300,
-    "simulator_commands_superseded": 0,
-    "simulator_observations": 301,
+    "simulator_commands_applied": 299,
+    "simulator_commands_superseded": 1,
+    "simulator_observations": 300,
     "inference_requests": 76,
     "chunks_generated": 76,
     "generation_failures": 0,
     "chunks_accepted": 75,
     "real_actions": 299,
+    "action_records_dropped": 0,
     "underruns": 1,
     "staleness_violations": 149
   },
   "safety": {
     "wall_clock_observation_age_applicable": true,
-    "clamped": 142,
+    "clamped": 165,
     "stale_rejected": 0,
     "clamp_by_dimension": [
       {"dimension": 0, "name": "delta_x", "below_min": 0, "above_max": 0, "max_excess": 0.000},
       {"dimension": 1, "name": "delta_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
-      {"dimension": 2, "name": "delta_z", "below_min": 8, "above_max": 0, "max_excess": 0.050},
+      {"dimension": 2, "name": "delta_z", "below_min": 5, "above_max": 0, "max_excess": 0.035},
       {"dimension": 3, "name": "axis_angle_x", "below_min": 0, "above_max": 0, "max_excess": 0.000},
       {"dimension": 4, "name": "axis_angle_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
       {"dimension": 5, "name": "axis_angle_z", "below_min": 0, "above_max": 0, "max_excess": 0.000},
-      {"dimension": 6, "name": "gripper", "below_min": 24, "above_max": 111, "max_excess": 0.146}
+      {"dimension": 6, "name": "gripper", "below_min": 25, "above_max": 135, "max_excess": 0.108}
     ]
   },
   "simulator_timing_mean_ms": {
-    "environment_step_including_render": 41.767,
-    "observation_build": 0.887,
-    "cpp_command_to_observation": 44.209
+    "environment_step_including_render": 42.996,
+    "observation_build": 0.904,
+    "cpp_command_to_observation": 45.674
   },
   "action_staleness_ms": {
     "samples": 299,
-    "p50": 567.983,
-    "p90": 756.822,
-    "p99": 767.986,
-    "max": 901.182
+    "p50": 558.733,
+    "p90": 756.657,
+    "p99": 758.730,
+    "max": 901.122
   },
   "safety_eligible_staleness_ms": {
     "definition": "observation age within safety limit",
     "samples": 299,
     "cold_start_or_rejected_samples": 0,
-    "p50": 567.983,
-    "p90": 756.822,
-    "p99": 767.986,
-    "max": 901.182
+    "p50": 558.733,
+    "p90": 756.657,
+    "p99": 758.730,
+    "max": 901.122
+  },
+  "action_smoothness": {
+    "definition": "L-infinity finite differences of consecutive, safety-filtered real commands per control tick; fallbacks and rejected windows excluded",
+    "first_difference_linf": {"samples": 298, "p50": 0.082, "p90": 1.974, "p99": 2.000, "max": 2.000},
+    "second_difference_linf": {"samples": 297, "p50": 0.109, "p90": 2.016, "p99": 3.968, "max": 3.976},
+    "third_difference_linf": {"samples": 296, "p50": 0.390, "p90": 5.794, "p99": 6.714, "max": 7.793},
+    "chunk_boundary_raw_linf": {"samples": 74, "p50": 0.082, "p90": 2.051, "p99": 2.121, "max": 2.121}
   },
   "liveness": {
     "real_time_applicable": true,
-    "control_rate_hz": 9.952,
-    "simulator_step_rate_hz": 9.952,
-    "command_delivery_fraction": 1.000,
+    "control_rate_hz": 9.948,
+    "simulator_step_rate_hz": 9.915,
+    "command_delivery_fraction": 0.997,
     "minimum_rate_hz": 9.500,
     "minimum_delivery_fraction": 0.990,
     "control_cadence_pass": true,
@@ -82,7 +90,7 @@
     "inference_pass": true,
     "freshness_pass": false,
     "runtime_pass": false,
-    "evaluation_pipeline_pass": true
+    "evaluation_pipeline_pass": false
   },
   "simulator_healthy": true
 }

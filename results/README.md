@@ -143,31 +143,42 @@ the expected safety boundary rather than evidence of double-normalization.
 
 The same real-time EGL setup recorded matched 300-action episodes for Discard and five-step RTC.
 Each MP4 contains the two observations seen by the policy plus per-action control metadata. Both
-runs applied all 300 commands and sustained the 9.5 Hz liveness floor, so this comparison is not
-confounded by the earlier CPU-rendering command loss.
+runs applied 299 of 300 commands, passed the 99% delivery requirement, and sustained the 9.5 Hz
+liveness floor. One latest-mailbox supersession per run is materially different from the earlier
+CPU-rendering loss of 140 commands, but neither episode is a perfect all-command evaluation.
 
 | Runtime metric | Discard | RTC, 5 denoising steps |
 |---|---:|---:|
-| Control rate | 10.000 Hz | 9.952 Hz |
-| Commands delivered | 300 / 300 | 300 / 300 |
+| Control rate | 10.000 Hz | 9.948 Hz |
+| Commands delivered | 299 / 300 | 299 / 300 |
 | Real actions / fallbacks | 298 / 2 | 299 / 1 |
 | Inference requests | 100 | 76 |
-| Staleness p50 | 457.0 ms | 568.0 ms |
-| Staleness p90 | 558.7 ms | 756.8 ms |
-| Staleness maximum | 667.1 ms | 901.2 ms |
+| Staleness p50 | 457.3 ms | 558.7 ms |
+| Staleness p90 | 558.5 ms | 756.7 ms |
+| Staleness maximum | 656.4 ms | 901.1 ms |
 | Actions above 575 ms | 1 | 149 |
+| Median executed action change, L-inf | 0.210 | 0.082 |
+| Median executed second difference, L-inf | 1.995 | 0.109 |
+| Median executed third difference, L-inf | 1.034 | 0.390 |
+| Median raw chunk-boundary jump, L-inf | 1.990 | 0.082 |
+| p90 raw chunk-boundary jump, L-inf | 2.032 | 2.051 |
 | Task success | no | no |
 
-RTC is functional here, but it is not yet an improvement. Its autograd/VJP guidance makes each
-request more expensive; the horizon scheduler issued fewer requests, and the resulting actions
-were older. Freezing/inpainting improves transition consistency, not inference latency by itself.
-This result rules out presenting RTC-5 as deployment-ready and points to guided-inference latency
-or scheduling as the next functional bottleneck.
+RTC clearly improves typical smoothness: its median raw boundary jump is about 96% smaller, while
+the executed first, second, and third finite differences fall by about 61%, 95%, and 62%. It does
+not remove the tail: p90 boundary jumps remain near 2.0. The action CSV confirms the gripper
+dimension reaches about 2.0 at those boundaries while RTC keeps every arm dimension below 0.26.
+Its autograd/VJP guidance also makes each request more expensive; the horizon
+scheduler issued fewer requests, and actions were older. RTC-5 therefore demonstrates its intended
+continuity benefit but is not deployment-ready. Guided-inference latency and the remaining tail
+transitions are the next functional bottlenecks.
 
 - [`libero_realtime_discard.mp4`](libero_realtime_discard.mp4)
 - [`libero_realtime_rtc5.mp4`](libero_realtime_rtc5.mp4)
 - [`libero_realtime_discard_video.json`](libero_realtime_discard_video.json)
 - [`libero_realtime_rtc5_video.json`](libero_realtime_rtc5_video.json)
+- [`libero_realtime_discard_actions.csv`](libero_realtime_discard_actions.csv)
+- [`libero_realtime_rtc5_actions.csv`](libero_realtime_rtc5_actions.csv)
 
 ## Discard refresh-policy baseline
 

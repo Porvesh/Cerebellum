@@ -134,9 +134,43 @@ void test_replay_runs_through_the_two_loop_runtime() {
 
     std::ostringstream csv;
     write_replay_actions_csv(csv, sink.records(), config.action_dim);
-    CHECK(csv.str().find("step,deadline_offset_ns,emit_offset_ns,fallback,observation_age_ns,"
-                         "safety_flags,safety_rejected,action_0") == 0);
+    CHECK(csv.str().find("step,chunk_id,chunk_index,chunk_boundary,deadline_offset_ns,"
+                         "emit_offset_ns,fallback,observation_age_ns,safety_flags,"
+                         "safety_rejected,action_0") == 0);
     CHECK(csv.str().find("\n11,") != std::string::npos);
+}
+
+void test_action_smoothness_uses_real_consecutive_actions() {
+    std::vector<ReplayActionRecord> records;
+    for (int step = 0; step < 4; ++step) {
+        ActionEmission emission;
+        emission.step = step;
+        emission.chunk_id = step < 2 ? 1 : 2;
+        emission.chunk_index = step < 2 ? step : step - 2;
+        constexpr float values[]{0.0F, 1.0F, 3.0F, 6.0F};
+        emission.action[0] = values[step];
+        records.push_back(ReplayActionRecord{emission, now()});
+    }
+
+    const ActionSmoothnessSummary summary = summarize_action_smoothness(records, 1);
+    CHECK(summary.first_difference_linf.count == 3);
+    CHECK(summary.first_difference_linf.p50_ns == 2 * ActionSmoothnessSummary::kScale);
+    CHECK(summary.second_difference_linf.count == 2);
+    CHECK(summary.second_difference_linf.p50_ns == ActionSmoothnessSummary::kScale);
+    CHECK(summary.third_difference_linf.count == 1);
+    CHECK(summary.third_difference_linf.max_ns == 0);
+
+    std::ostringstream csv;
+    write_replay_actions_csv(csv, records, 1);
+    CHECK(csv.str().find("\n0,1,0,1,") != std::string::npos);
+    CHECK(csv.str().find("\n1,1,1,0,") != std::string::npos);
+    CHECK(csv.str().find("\n2,2,0,1,") != std::string::npos);
+
+    records[2].emission.fallback = true;
+    const ActionSmoothnessSummary without_fallback = summarize_action_smoothness(records, 1);
+    CHECK(without_fallback.first_difference_linf.count == 1);
+    CHECK(without_fallback.second_difference_linf.count == 0);
+    CHECK(without_fallback.third_difference_linf.count == 0);
 }
 
 void test_replay_sink_reports_capacity_exhaustion() {
@@ -235,6 +269,7 @@ int main() {
     test_replay_rejects_an_invalid_timeline();
     test_replay_runs_through_the_two_loop_runtime();
     test_replay_sink_reports_capacity_exhaustion();
+    test_action_smoothness_uses_real_consecutive_actions();
     test_episode_binary_round_trip();
     test_episode_rejects_corruption_and_schema_changes();
     test_quality_aligns_absolute_steps_and_excludes_fallbacks();
