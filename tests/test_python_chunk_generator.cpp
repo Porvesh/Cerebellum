@@ -20,9 +20,10 @@ static int g_failures = 0;
 
 namespace {
 
-std::shared_ptr<const ObservationSnapshot> observation(std::uint8_t first_pixel = 1) {
+std::shared_ptr<const ObservationSnapshot> observation(std::uint8_t first_pixel = 1,
+                                                       std::uint64_t sequence = 7) {
     auto value = std::make_shared<ObservationSnapshot>();
-    value->sequence = 7;
+    value->sequence = sequence;
     value->capture_time = now() - std::chrono::milliseconds(2);
     value->state = {1.25F, -2.5F, 3.75F, 4.0F, 5.0F, 6.0F};
     value->task = "pick up the blue block";
@@ -121,6 +122,23 @@ void test_missing_worker_fails_at_startup() {
         threw = true;
     }
     CHECK(threw);
+}
+
+void test_live_seed_varies_reproducibly_by_observation() {
+    RuntimeConfig config;
+    StaticObservationSource source(observation());
+    auto live_options = options();
+    live_options.vary_seed_by_observation = true;
+    PythonChunkGenerator generator(config, source, live_options);
+
+    Chunk first;
+    CHECK(generator.generate(
+        InferenceRequest{0, -1, config.chunk_size, Stitching::Discard}, first));
+    source.publish(observation(/*first_pixel=*/1, /*sequence=*/8));
+    Chunk second;
+    CHECK(generator.generate(
+        InferenceRequest{50, 49, config.chunk_size, Stitching::Discard}, second));
+    CHECK(second.model_actions != first.model_actions);
 }
 
 void test_rtc_prefix_crosses_worker_boundary() {
@@ -266,6 +284,7 @@ void test_real_smolvla_bridge_when_requested() {
 int main() {
     test_round_trip_preserves_both_action_spaces();
     test_missing_worker_fails_at_startup();
+    test_live_seed_varies_reproducibly_by_observation();
     test_rtc_prefix_crosses_worker_boundary();
     test_runtime_publishes_python_chunk_to_control();
     test_missing_observation_does_not_break_worker();

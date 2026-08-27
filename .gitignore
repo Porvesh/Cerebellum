@@ -1,32 +1,32 @@
 # secrets only — .env itself is committed, it is a run condition
 .env.local
 
-# python
+# build output
+/build/
+/build-*/
+
+# clangd's flags: cmake writes them into build/, symlinked here (machine-local)
+/compile_commands.json
+
+# compiled
+*.o
+*.a
+
+# python (the model side only — the runtime is C++)
 __pycache__/
 *.py[cod]
 .venv/
-venv/
-*.egg-info/
-build/
-dist/
-
-# test / lint caches
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
 
 # measurement output — results/*.csv and results/*.png are committed on purpose
 # (see spec.md §11); these are the raw traces behind them, which are not
 results/raw/
 *.nsys-rep
 *.sqlite
-*.json.gz
 trace_*.json
 
-# model weights / caches — never committed
+# model weights / caches — never committed (HF_HOME points at /shared)
 *.safetensors
 *.pt
-*.bin
 .cache/
 
 # editor / OS cruft
@@ -35,8 +35,5 @@ trace_*.json
 .vscode/
 .idea/
 
-# personal/local Claude notes — never commit
-CLAUDE.md
-CLAUDE.local.md
-.claude/
+# personal/local agent state — never commit
 .codex

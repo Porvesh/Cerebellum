@@ -59,6 +59,10 @@ struct PythonChunkGeneratorOptions {
     std::chrono::milliseconds startup_timeout{600'000};
     std::chrono::milliseconds inference_timeout{30'000};
     std::uint32_t seed = 0;
+    // Keep benchmarks/replays bit-repeatable by default. Live policy adapters
+    // may opt into a deterministic per-observation diffusion seed so repeated
+    // replans do not reuse an identical noise trajectory.
+    bool vary_seed_by_observation = false;
 };
 
 // A persistent, crash-isolated Python worker behind the existing inference

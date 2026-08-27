@@ -133,7 +133,7 @@ PythonSimulatorAdapter::PythonSimulatorAdapter(PythonSimulatorOptions options)
       options_.expected_action_dim > kPaddedActionDim ||
       options_.image_size <= 0 ||
       options_.image_size > std::numeric_limits<std::uint16_t>::max() ||
-      options_.control_hz <= 0 ||
+      options_.control_hz <= 0 || options_.simulation_hz <= 0 ||
       options_.worker_poll_period <= std::chrono::microseconds::zero() ||
       options_.startup_timeout <= std::chrono::milliseconds::zero() ||
       options_.step_timeout <= std::chrono::milliseconds::zero()) {
@@ -169,6 +169,8 @@ PythonSimulatorAdapter::PythonSimulatorAdapter(PythonSimulatorOptions options)
       std::to_string(options_.init_state),
       "--control-hz",
       std::to_string(options_.control_hz),
+      "--simulation-hz",
+      std::to_string(options_.simulation_hz),
       "--video-path",
       options_.video_path,
       "--video-label",

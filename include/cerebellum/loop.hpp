@@ -71,6 +71,10 @@ class ActionSink {
    public:
     virtual ~ActionSink() = default;
     virtual void emit(const ActionEmission &emission) noexcept = 0;
+    // Simulation/task adapters may request a clean stop after an acknowledged
+    // terminal state. Hardware sinks can use the same hook for controller-side
+    // completion without throwing or blocking the control thread.
+    virtual bool stop_requested() const noexcept { return false; }
 };
 
 // RealTime follows the fixed wall-clock grid and skips obsolete steps after a
@@ -160,7 +164,8 @@ class RuntimeLoop {
 
         if (pacing == ControlPacing::SynchronousEvaluation) {
             for (std::size_t tick = 0;
-                 tick < max_ticks && !stop_.load(std::memory_order_acquire); ++tick) {
+                 tick < max_ticks && !stop_.load(std::memory_order_acquire) &&
+                 !sink_.stop_requested(); ++tick) {
                 const auto step = static_cast<std::int64_t>(tick);
                 control_tick(step, now());
             }
@@ -174,7 +179,9 @@ class RuntimeLoop {
         const ScheduleClock schedule(origin, cfg_.control_period);
         std::int64_t step = 0;
 
-        for (std::size_t tick = 0; tick < max_ticks && !stop_.load(std::memory_order_acquire);
+        for (std::size_t tick = 0;
+             tick < max_ticks && !stop_.load(std::memory_order_acquire) &&
+             !sink_.stop_requested();
              ++tick) {
             const TimePoint deadline = schedule.deadline(step);
             sleep_until(deadline);

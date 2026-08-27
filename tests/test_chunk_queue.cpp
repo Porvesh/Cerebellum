@@ -222,6 +222,29 @@ static void test_discard_skips_the_stale_prefix() {
     CHECK(linf > 0.2499 && linf < 0.2501);
 }
 
+static void test_fresh_start_executes_action_zero_on_accept() {
+    RuntimeConfig cfg = cfg_with(Stitching::Discard);
+    cfg.chunk_alignment = ChunkAlignment::FreshStart;
+    ActionChunkQueue q(cfg);
+    ScheduleClock sched(now());
+    Action a{};
+    ActionRecord rec;
+
+    Chunk *chunk = fill(q, 3, 20, 0.0f, /*chunk_id=*/2);
+    CHECK(chunk != nullptr);
+    for (int i = 0; i < chunk->count; ++i) {
+        chunk->actions[static_cast<std::size_t>(i)][0] = static_cast<float>(i);
+    }
+    CHECK(q.publish(chunk));
+    CHECK(q.pop(5, sched.deadline(5), a, rec));
+    CHECK(a[0] == 0.0f);
+    CHECK(rec.index == 0);
+    CHECK(q.consumer_stats().actions_discarded == 0);
+    CHECK(q.pop(6, sched.deadline(6), a, rec));
+    CHECK(a[0] == 1.0f);
+    CHECK(rec.index == 1);
+}
+
 // --- §4.3, temporal ensembling ----------------------------------------------
 
 static void test_ensemble_blends_the_overlap() {
@@ -383,6 +406,7 @@ int main() {
     test_continuous_refresh_starts_after_each_accept();
     test_rtc_preserves_configured_refresh_gap();
     test_discard_skips_the_stale_prefix();
+    test_fresh_start_executes_action_zero_on_accept();
     test_ensemble_blends_the_overlap();
     test_ensemble_releases_the_old_chunk();
     test_newest_chunk_wins();

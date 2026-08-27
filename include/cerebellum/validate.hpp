@@ -113,6 +113,10 @@ inline void RuntimeConfig::validate() const {
     }
 
     if (stitching == Stitching::Rtc) {
+        if (chunk_alignment != ChunkAlignment::Absolute) {
+            throw std::invalid_argument(
+                "RTC requires absolute chunk alignment for its committed prefix");
+        }
         if (rtc.denoise_steps <= 0) {
             throw std::invalid_argument("RTC denoise_steps must be positive");
         }

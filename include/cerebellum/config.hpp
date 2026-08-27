@@ -86,6 +86,12 @@ enum class UnderrunPolicy { HoldLast, Zeros, Extrapolate };
 
 enum class Stitching { Discard, Ensemble, Rtc };
 
+// Absolute preserves the model chunk's original control timeline and skips a
+// prefix that completed after its intended ticks. FreshStart rebases a newly
+// accepted plan to the current tick, matching policies evaluated by executing
+// action zero after every replan (for example SmolVLA LIBERO n_action_steps=1).
+enum class ChunkAlignment { Absolute, FreshStart };
+
 // Tail conserves inference work by draining most of a chunk. Continuous starts
 // the next request as soon as the previous result is accepted, trading model
 // duty cycle for fresher observations.
@@ -118,6 +124,7 @@ struct RuntimeConfig {
     int queue_capacity = 64;  // >= chunk_size + effective_refresh_trigger()
 
     Stitching stitching = Stitching::Discard;
+    ChunkAlignment chunk_alignment = ChunkAlignment::Absolute;
     RefreshPolicy refresh_policy = RefreshPolicy::Tail;
     RtcConfig rtc{};
 

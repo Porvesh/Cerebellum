@@ -1,0 +1,100 @@
+{
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "suite": "libero_spatial",
+  "task_id": 0,
+  "init_state": 0,
+  "task": "pick up the black bowl between the plate and the ramekin and place it on the plate",
+  "device": "cuda",
+  "mode": "realtime",
+  "control_hz": 3,
+  "simulation_hz": 20,
+  "control_period_ms": 333.333,
+  "inference_budget_ms": 300.000,
+  "max_staleness_ms": 700.000,
+  "refresh_trigger": 2,
+  "rtc_inference_delay": 1,
+  "rtc_execution_horizon": 1,
+  "rtc_denoise_steps": 3,
+  "gripper_rate_limit": 10.000,
+  "chunk_alignment": "fresh-start",
+  "stitching": "discard",
+  "ticks_requested": 300,
+  "wall_time_ms": 27666.892,
+  "success": true,
+  "terminated": true,
+  "counts": {
+    "control_emissions": 83,
+    "fallback_actions": 0,
+    "safety_modified": 40,
+    "safety_rejections": 0,
+    "simulator_commands_applied": 83,
+    "simulator_commands_superseded": 0,
+    "simulator_observations": 84,
+    "inference_requests": 83,
+    "chunks_generated": 83,
+    "generation_failures": 0,
+    "chunks_accepted": 83,
+    "real_actions": 83,
+    "action_records_dropped": 0,
+    "underruns": 0,
+    "staleness_violations": 0
+  },
+  "safety": {
+    "wall_clock_observation_age_applicable": true,
+    "clamped": 40,
+    "stale_rejected": 0,
+    "clamp_by_dimension": [
+      {"dimension": 0, "name": "delta_x", "below_min": 0, "above_max": 2, "max_excess": 0.004},
+      {"dimension": 1, "name": "delta_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 2, "name": "delta_z", "below_min": 4, "above_max": 0, "max_excess": 0.087},
+      {"dimension": 3, "name": "axis_angle_x", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 4, "name": "axis_angle_y", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 5, "name": "axis_angle_z", "below_min": 0, "above_max": 0, "max_excess": 0.000},
+      {"dimension": 6, "name": "gripper", "below_min": 21, "above_max": 17, "max_excess": 0.023}
+    ]
+  },
+  "simulator_timing_mean_ms": {
+    "environment_step_including_render": 34.385,
+    "observation_build": 1.070,
+    "cpp_command_to_observation": 36.041
+  },
+  "action_staleness_ms": {
+    "samples": 83,
+    "p50": 632.587,
+    "p90": 635.984,
+    "p99": 667.821,
+    "max": 667.821
+  },
+  "safety_eligible_staleness_ms": {
+    "definition": "observation age within safety limit",
+    "samples": 83,
+    "cold_start_or_rejected_samples": 0,
+    "p50": 632.587,
+    "p90": 635.984,
+    "p99": 667.821,
+    "max": 667.821
+  },
+  "action_smoothness": {
+    "definition": "L-infinity finite differences of consecutive, safety-filtered real commands per control tick; fallbacks and rejected windows excluded",
+    "first_difference_linf": {"samples": 82, "p50": 0.221, "p90": 0.550, "p99": 1.970, "max": 1.970},
+    "second_difference_linf": {"samples": 81, "p50": 0.400, "p90": 0.863, "p99": 3.929, "max": 3.929},
+    "third_difference_linf": {"samples": 80, "p50": 0.705, "p90": 1.566, "p99": 7.851, "max": 7.851},
+    "chunk_boundary_raw_linf": {"samples": 82, "p50": 0.228, "p90": 0.550, "p99": 1.970, "max": 1.970}
+  },
+  "liveness": {
+    "real_time_applicable": true,
+    "control_rate_hz": 3.000,
+    "simulator_step_rate_hz": 3.000,
+    "command_delivery_fraction": 1.000,
+    "minimum_rate_hz": 2.850,
+    "minimum_delivery_fraction": 0.990,
+    "control_cadence_pass": true,
+    "simulator_throughput_pass": true,
+    "command_delivery_pass": true,
+    "inference_pass": true,
+    "freshness_pass": true,
+    "runtime_pass": true,
+    "evaluation_pipeline_pass": true
+  },
+  "simulator_healthy": true
+}

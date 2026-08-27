@@ -30,7 +30,8 @@ struct Arguments {
     std::string actions_csv;
     int task_id = 0;
     int init_state = 0;
-    int control_hz = 10;
+    int control_hz = 3;
+    int simulation_hz = 20;
     int ticks = 300;
     int warmup_inferences = 1;
     int refresh_trigger = 0;
@@ -38,12 +39,15 @@ struct Arguments {
     int rtc_inference_delay = 0;
     int rtc_execution_horizon = 0;
     double inference_budget_ms = 300.0;
-    double max_staleness_ms = 575.0;
+    double max_staleness_ms = 700.0;
     double max_observation_age_ms = 1000.0;
+    double gripper_rate_limit = 10.0;
     Stitching stitching = Stitching::Discard;
+    ChunkAlignment chunk_alignment = ChunkAlignment::FreshStart;
     RefreshPolicy refresh_policy = RefreshPolicy::Continuous;
     ControlPacing pacing = ControlPacing::RealTime;
     bool local_files_only = true;
+    bool chunk_alignment_explicit = false;
 };
 
 // The model process is loaded and warmed before LIBERO captures its initial
@@ -113,6 +117,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.ticks = std::stoi(std::string(value(arg)));
         } else if (arg == "--control-hz") {
             args.control_hz = std::stoi(std::string(value(arg)));
+        } else if (arg == "--simulation-hz") {
+            args.simulation_hz = std::stoi(std::string(value(arg)));
         } else if (arg == "--warmup-inferences") {
             args.warmup_inferences = std::stoi(std::string(value(arg)));
         } else if (arg == "--refresh-trigger") {
@@ -129,6 +135,8 @@ Arguments parse_arguments(int argc, char **argv) {
             args.max_staleness_ms = std::stod(std::string(value(arg)));
         } else if (arg == "--max-observation-age-ms") {
             args.max_observation_age_ms = std::stod(std::string(value(arg)));
+        } else if (arg == "--gripper-rate-limit") {
+            args.gripper_rate_limit = std::stod(std::string(value(arg)));
         } else if (arg == "--stitching") {
             const std::string_view name = value(arg);
             if (name == "discard")
@@ -137,6 +145,16 @@ Arguments parse_arguments(int argc, char **argv) {
                 args.stitching = Stitching::Rtc;
             else
                 throw std::invalid_argument("--stitching must be discard or rtc");
+        } else if (arg == "--chunk-alignment") {
+            const std::string_view name = value(arg);
+            if (name == "absolute")
+                args.chunk_alignment = ChunkAlignment::Absolute;
+            else if (name == "fresh-start")
+                args.chunk_alignment = ChunkAlignment::FreshStart;
+            else
+                throw std::invalid_argument(
+                    "--chunk-alignment must be absolute or fresh-start");
+            args.chunk_alignment_explicit = true;
         } else if (arg == "--refresh-policy") {
             const std::string_view name = value(arg);
             if (name == "tail")
@@ -170,11 +188,16 @@ Arguments parse_arguments(int argc, char **argv) {
             throw std::invalid_argument("unknown argument: " + std::string(arg));
         }
     }
-    if (args.task_id < 0 || args.init_state < 0 || args.control_hz <= 0 || args.ticks <= 0 ||
+    if (args.stitching == Stitching::Rtc && !args.chunk_alignment_explicit) {
+        args.chunk_alignment = ChunkAlignment::Absolute;
+    }
+    if (args.task_id < 0 || args.init_state < 0 || args.control_hz <= 0 ||
+        args.simulation_hz <= 0 || args.ticks <= 0 ||
         args.warmup_inferences < 0 || args.refresh_trigger < 0 ||
         args.refresh_trigger >= kChunkSize || !(args.inference_budget_ms > 0.0) ||
         !(args.max_staleness_ms > 0.0) ||
         !(args.max_observation_age_ms > 0.0) ||
+        !(args.gripper_rate_limit > 0.0) ||
         (!args.output.empty() && args.output == args.actions_csv)) {
         throw std::invalid_argument("invalid LIBERO rollout argument");
     }
@@ -224,6 +247,8 @@ class MeasuredSimulatorSink final : public ActionSink {
             ++dropped_records_;
         simulator_.emit(emission);
     }
+
+    bool stop_requested() const noexcept override { return simulator_.terminated(); }
 
     const std::vector<ReplayActionRecord> &records() const noexcept { return records_; }
     std::uint64_t dropped_records() const noexcept { return dropped_records_; }
@@ -324,6 +349,7 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
         << "  \"device\": \"" << args.device << "\",\n"
         << "  \"mode\": \"" << (synchronous ? "synchronous" : "realtime") << "\",\n"
       << "  \"control_hz\": " << args.control_hz << ",\n"
+      << "  \"simulation_hz\": " << args.simulation_hz << ",\n"
       << "  \"control_period_ms\": " << config.control_period_ms() << ",\n"
       << "  \"inference_budget_ms\": " << config.inference_budget_ms << ",\n"
       << "  \"max_staleness_ms\": " << config.max_staleness_ms << ",\n"
@@ -331,6 +357,10 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
       << "  \"rtc_inference_delay\": " << loop.queue().inference_delay() << ",\n"
       << "  \"rtc_execution_horizon\": " << loop.queue().execution_horizon() << ",\n"
       << "  \"rtc_denoise_steps\": " << args.rtc_denoise_steps << ",\n"
+      << "  \"gripper_rate_limit\": " << args.gripper_rate_limit << ",\n"
+      << "  \"chunk_alignment\": \""
+      << (args.chunk_alignment == ChunkAlignment::FreshStart ? "fresh-start" : "absolute")
+      << "\",\n"
         << "  \"stitching\": \"" << (args.stitching == Stitching::Rtc ? "rtc" : "discard")
         << "\",\n"
         << "  \"ticks_requested\": " << args.ticks << ",\n"
@@ -422,6 +452,7 @@ int main(int argc, char **argv) {
         config.action_dim = kLiberoActionDim;
         config.action_space = ActionSpace::Delta;
         config.stitching = args.stitching;
+        config.chunk_alignment = args.chunk_alignment;
         config.refresh_policy = args.refresh_policy;
         config.refresh_trigger = args.refresh_trigger;
         config.queue_capacity = config.chunk_size + config.effective_refresh_trigger();
@@ -438,6 +469,7 @@ int main(int argc, char **argv) {
         generator_options.model = args.model;
         generator_options.device = args.device;
         generator_options.local_files_only = args.local_files_only;
+        generator_options.vary_seed_by_observation = true;
         generator_options.startup_timeout = std::chrono::minutes(15);
         generator_options.inference_timeout = std::chrono::minutes(2);
         PythonChunkGenerator generator(config, observations, generator_options);
@@ -462,6 +494,7 @@ int main(int argc, char **argv) {
         simulator_options.task_id = args.task_id;
         simulator_options.init_state = args.init_state;
         simulator_options.control_hz = args.control_hz;
+        simulator_options.simulation_hz = args.simulation_hz;
         simulator_options.osmesa_library_path = args.osmesa_library_path;
         simulator_options.video_path = args.video;
         simulator_options.video_label =
@@ -477,6 +510,11 @@ int main(int argc, char **argv) {
             safety_config.min_action[static_cast<std::size_t>(d)] = -1.0F;
             safety_config.max_action[static_cast<std::size_t>(d)] = 1.0F;
         }
+        // Robosuite consumes only the sign of the gripper command. At 10 Hz the
+        // default makes a full open/close reversal span two ticks, suppressing
+        // isolated sign chatter. At the verified 3 Hz compatibility cadence it
+        // leaves the checkpoint's binary decision unchanged.
+        safety_config.max_action_rate[6] = static_cast<float>(args.gripper_rate_limit);
         safety_config.replacement_action[6] = -1.0F;
         // In synchronous evaluation, wall time intentionally runs slower than
         // simulated policy time. The observation is still the latest simulator
@@ -487,6 +525,9 @@ int main(int argc, char **argv) {
                 : std::chrono::duration_cast<Nanos>(
                       std::chrono::duration<double, std::milli>(args.max_observation_age_ms));
         ActionSafetyFilter safety(safety_config);
+        Action initial_command{};
+        initial_command[6] = -1.0F;
+        safety.reset(initial_command);
         MeasuredSimulatorSink sink(simulator, static_cast<std::size_t>(args.ticks));
         RuntimeLoop loop(config, generator, sink, static_cast<std::size_t>(args.ticks),
                          std::chrono::microseconds(100), &safety);

@@ -35,6 +35,10 @@ struct PythonSimulatorOptions {
   int task_id = 0;
   int init_state = 0;
   int control_hz = kControlHz;
+  // MuJoCo/Robosuite controller frequency is a property of the trained policy
+  // and can differ from Cerebellum's external command cadence. LIBERO's native
+  // controller runs at 20 Hz.
+  int simulation_hz = 20;
   int image_size = 256;
   int expected_action_dim = 7;
   // A user-local extracted libOSMesa directory can be supplied on machines
@@ -84,6 +88,9 @@ public:
 
   bool healthy() const noexcept {
     return healthy_.load(std::memory_order_acquire);
+  }
+  bool terminated() const noexcept {
+    return terminated_.load(std::memory_order_acquire);
   }
   int action_dim() const noexcept { return action_dim_; }
   int state_dim() const noexcept { return state_dim_; }

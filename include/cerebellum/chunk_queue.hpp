@@ -95,6 +95,7 @@ class ActionChunkQueue {
           action_dim_(cfg.action_dim),
           refresh_trigger_(cfg.effective_refresh_trigger()),
           stitching_(cfg.stitching),
+          alignment_(cfg.chunk_alignment),
           refresh_policy_(cfg.refresh_policy),
           rtc_refresh_gap_(cfg.effective_rtc_execution_horizon() -
                            cfg.effective_rtc_inference_delay()),
@@ -302,6 +303,9 @@ class ActionChunkQueue {
         if (!got) return;
 
         Chunk *c = &pool_[take];
+        if (alignment_ == ChunkAlignment::FreshStart) {
+            c->first_step = step;
+        }
         record_seam(*c, step);
         ++cstats_.chunks_accepted;
         actions_since_accept_.store(0, std::memory_order_relaxed);
@@ -366,6 +370,7 @@ class ActionChunkQueue {
     const int action_dim_;
     const int refresh_trigger_;
     const Stitching stitching_;
+    const ChunkAlignment alignment_;
     const RefreshPolicy refresh_policy_;
     const int rtc_refresh_gap_;
     std::atomic<int> inference_delay_;

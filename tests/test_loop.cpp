@@ -41,6 +41,18 @@ class RecordingSink final : public ActionSink {
     Nanos delay_;
 };
 
+class StopAfterSink final : public ActionSink {
+   public:
+    explicit StopAfterSink(std::size_t limit) : limit_(limit) {}
+    void emit(const ActionEmission &) noexcept override { ++emissions; }
+    bool stop_requested() const noexcept override { return emissions >= limit_; }
+
+    std::size_t emissions = 0;
+
+   private:
+    std::size_t limit_;
+};
+
 class SyntheticGenerator final : public ChunkGenerator {
    public:
     SyntheticGenerator(int chunk_size, Nanos delay) : chunk_size_(chunk_size), delay_(delay) {}
@@ -306,6 +318,19 @@ void test_external_stop_joins_both_loops() {
     CHECK(sink.emissions.size() == loop.metrics().ticks);
 }
 
+void test_sink_completion_stops_cleanly() {
+    const RuntimeConfig cfg = small_config();
+    FailingGenerator generator;
+    StopAfterSink sink(3);
+    RuntimeLoop loop(cfg, generator, sink, 10, std::chrono::microseconds(25));
+
+    loop.run_for(10, ControlPacing::SynchronousEvaluation);
+
+    CHECK(sink.emissions == 3);
+    CHECK(loop.metrics().ticks == 3);
+    CHECK(!loop.running());
+}
+
 }  // namespace
 
 int main() {
@@ -317,6 +342,7 @@ int main() {
     test_synchronous_control_preserves_every_step();
     test_safety_runs_before_emit_and_fallback_history();
     test_external_stop_joins_both_loops();
+    test_sink_completion_stops_cleanly();
 
     if (g_failures == 0) {
         std::printf("test_loop: all checks passed\n");

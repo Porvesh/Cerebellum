@@ -2,322 +2,118 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**A real-time inference runtime for vision-language-action policies.**
+Real-time execution for chunked vision-language-action (VLA) policies.
 
-Serves a VLA policy at a fixed control cadence on a single GPU, and proves it with
-tail-latency measurements rather than throughput numbers.
+Cerebellum keeps robot control on a fixed clock while model inference runs asynchronously. The
+control thread never waits for the GPU: a worker publishes action chunks into a lock-free queue,
+and the runtime measures both missed deadlines and observation-to-action staleness.
 
-A robot controller needs a new action every 33 ms. A VLA forward pass takes 90–150 ms on
-an H100 at batch size 1. That deficit isn't closed by making the forward faster — it's
-closed by action chunking, asynchronous inference, and a queue between the slow irregular
-producer and the fast fixed-rate consumer. Cerebellum is that queue plus the machinery
-around it.
-
-## The invariant
-
-> An action is available at the actuator every 33 ms, computed from an observation
-> no older than 350 ms.
-
-Two numbers, two distinct failure modes: miss the cadence and the controller sees jitter
-(a *latency* failure); blow the staleness bound and actions arrive smoothly but describe a
-world that has moved (a *staleness* failure). They are traded against each other on
-purpose and never collapsed into one word.
-
-## Where this sits
-
-Third of three, named for the sensorimotor pathway:
-
-| Project | Biological role | What it does |
-|---|---|---|
-| [**Retina**](https://github.com/Porvesh/Retina) | Transduces light, sends it down the optic nerve | Frame capture, lossy transport, multi-camera alignment |
-| [**Axon**](https://github.com/Porvesh/Axon) | Carries signals between cells | Zero-copy shared-memory ring, `io_uring` persistence |
-| **Cerebellum** | Timing and smooth motor coordination | Turns observations into actions on a deadline |
-
-The cerebellum handles *timing* — it doesn't decide what to do, it makes movement smooth
-and correctly phased, using feed-forward prediction rather than waiting for feedback. This
-component doesn't train the policy, it schedules it. The VLA is a black box; the value is
-entirely in the layer wrapped around it.
-
-```
-   observation                                  actions
-        │                                          ▲
-        ▼                                          │
-  ┌───────────────┐                        ┌───────────────┐
-  │  ObsSource    │                        │  Control      │
-  │  latest()     │                        │  thread       │
-  │  non-blocking │                        │  33 ms tick   │
-  └───────┬───────┘                        └───────▲───────┘
-          │                                        │ pop
-          ▼                                        │
-  ┌───────────────┐        push chunk      ┌───────┴───────┐
-  │  Inference    │──────────────────────▶ │  Action chunk │
-  │  worker       │                        │  queue        │
-  │  ~90 ms/pass  │                        │  ~50 actions  │
-  └───────────────┘                        └───────────────┘
+```text
+observation -> inference worker -> action-chunk queue -> fixed-rate control -> robot
+                    slow/variable             fast/non-blocking
 ```
 
-Two threads, two rates. The queue is the only thing between them, and **the control thread
-never blocks on the GPU.**
+## What is implemented
 
-## Status
+- C++20 two-thread runtime with a fixed-grid control loop and bounded SPSC queue.
+- Persistent framed C++/Python bridge for synthetic and SmolVLA inference.
+- Three chunk-stitching policies: Discard, temporal Ensemble, and RTC.
+- Model-space RTC conditioning with robot-space execution.
+- Observation freshness checks, action bounds, rate/acceleration limits, and safe fallback.
+- LIBERO adapter with separate policy cadence and simulator frequency, non-blocking video
+  recording, action traces, and automatic task-completion stop.
+- Portable offline replay through the same runtime path.
 
-The standalone phase-1 skeleton is implemented: configuration validation, fixed-grid timing,
-a lock-free action-chunk queue, and the two-thread control/inference runtime. A persistent,
-framed local-process bridge now connects C++ `ChunkGenerator::generate()` to a synthetic Python
-worker. Each request carries an immutable observation snapshot containing robot state, task text,
-and camera-native HWC bytes; Python converts the images to CHW floats for the runner. Its
-versioned handshake rejects mismatched chunk and action dimensions before control starts. The
-Python model side also loads `lerobot/smolvla_base` and returns both representations needed by
-the system:
+## RTC and the Physical Intelligence paper
 
-- `model_actions`: `50 × 32`, padded model space used for RTC conditioning.
-- `robot_actions`: `50 × 6`, sliced and postprocessed for execution.
+Cerebellum implements the inference-time method from Physical Intelligence's
+[Real-Time Execution of Action Chunking Flow Policies](https://arxiv.org/abs/2506.07339)
+([project page](https://www.pi.website/research/real_time_chunking)). While the current chunk is
+executing, RTC generates its replacement, freezes the actions already committed to execution, and
+inpaints the remaining action horizon during flow denoising. No policy retraining is required.
 
-The base checkpoint smoke test proves loading, preprocessing, denoising, and output shapes; it
-does not establish useful robot behavior without task-specific fine-tuning.
+This repository combines that method with the systems work needed to run it: asynchronous
+scheduling, conservative delay/horizon tracking, padded model-space prefix alignment, queue
+handoff, safety filtering, and end-to-end timing. Discard remains available as the
+checkpoint-compatible behavior baseline, and temporal ensembling provides a simpler overlap
+alternative.
 
-Build and exercise the C++ → Python → C++ synthetic round trip using the no-sudo environment:
+## See the difference
+
+[Watch the matched Discard vs RTC-5 rollout](results/libero_discard_vs_rtc5.mp4)
+
+The side-by-side video uses the same LIBERO task, initial state, checkpoint, and 10 Hz experimental
+runtime. RTC reduced the median raw chunk-boundary jump from `1.990` to `0.082` L-infinity—about
+96%—and is visibly smoother at typical seams. The p90 seam remained near `2.0`, and neither run
+completed the task, so this is evidence of continuity rather than policy success.
+
+| Matched rollout | Discard | RTC-5 |
+|---|---:|---:|
+| Commands delivered | 299 / 300 | 299 / 300 |
+| Median boundary jump, L-inf | 1.990 | 0.082 |
+| p90 boundary jump, L-inf | 2.032 | 2.051 |
+| Task success | no | no |
+
+The individual videos and action traces are listed in [results](results/README.md).
+
+## Verified LIBERO behavior
+
+The compatible default for `HuggingFaceVLA/smolvla_libero` replans after every executed action:
+
+- 3 Hz external policy cadence; LIBERO remains at its native 20 Hz simulation/controller rate.
+- Fresh-start chunk alignment, full 10-step inference, and reproducible per-observation noise.
+- `libero_spatial` task 0 completed after 83 actions in 27.67 seconds.
+- 83/83 commands delivered, with no underruns, stale-action violations, or inference failures.
+
+See the machine-readable [successful rollout](results/libero_compatible_task0.json). RTC currently
+uses three denoising steps as an experimental smoother; it preserves freshness but has not yet
+preserved task success on this checkpoint.
+
+## Build and test
+
+Requirements: CMake 3.24+, a C++20 compiler, Python 3.11, and NumPy.
 
 ```bash
 cmake -S . -B build -DPython3_EXECUTABLE="$CONDA_PREFIX/bin/python"
 cmake --build build -j
 ctest --test-dir build --output-on-failure
+PYTHONPATH=python python -m pytest -q
 ```
 
-The inference worker can run either the fast synthetic backend or the real SmolVLA checkpoint;
-SmolVLA advertises its state and camera schema
-during startup, and C++ rejects mismatched observations before sending inference requests.
-RTC requests carry the retained chunk identity and aligned committed model-space prefix. The
-SmolVLA worker applies gradient-guided inpainting during every denoising step; the control
-thread still only sees postprocessed robot-space actions.
-
-The real cross-process C++ → SmolVLA → C++ test is opt-in because it loads the checkpoint:
-
-```bash
-HF_HOME=/path/to/huggingface/cache \
-CEREBELLUM_RUN_SMOLVLA_BRIDGE=1 \
-CEREBELLUM_SMOLVLA_DEVICE=cpu \
-./build/test_python_chunk_generator
-```
-
-Use `CEREBELLUM_SMOLVLA_DEVICE=cuda` when a GPU has enough free memory. Model startup and
-per-request inference use separate configurable timeouts in `PythonChunkGeneratorOptions`.
-Set `CEREBELLUM_RUN_SMOLVLA_RTC=1` to run the direct two-request RTC smoke test; it verifies
-that guided denoising moves the new committed prefix closer to the retained chunk prefix.
-
-### LIBERO simulation
-
-`PythonSimulatorAdapter` is both the runtime's `ActionSink` and `ObservationSource`. The 30 Hz
-control thread only writes a preallocated atomic newest-action mailbox. A third, non-real-time
-worker owns Python and MuJoCo I/O, applies the newest command, and atomically publishes the next
-immutable 8D-state/two-camera observation for inference. This closes the same control → robot →
-observation loop a physical robot adapter will eventually implement.
-
-Install LIBERO into the existing project environment (no separate Conda environment is needed).
-Include the `video` extra to enable MP4 rollout recording:
+Install the optional model and simulator dependencies:
 
 ```bash
 python -m pip install -e '.[libero,video]'
 ```
 
-The real simulator test is opt-in. This workstation has no `render`-group access and its system
-GLVND installation only exposes Mesa, but EGL still works without `sudo`: extract the NVIDIA
-userspace package matching the loaded kernel driver into a user-owned directory, then point
-GLVND at its vendor manifest. For physical GPU 3 and the local 580.105.08 payload:
+## Run LIBERO
 
 ```bash
 CUDA_VISIBLE_DEVICES=3 \
+HF_HOME=/path/to/huggingface/cache \
 MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
-__EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/10_nvidia.json" \
-LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
-CEREBELLUM_RUN_LIBERO_SIMULATOR=1 \
-./build/test_python_simulator
-```
-
-The NVIDIA package is deliberately not committed. Its userspace version must match
-`/proc/driver/nvidia/version`; mixing driver versions can make EGL initialization fail. OSMesa
-remains the CPU fallback:
-
-```bash
-CEREBELLUM_RUN_LIBERO_SIMULATOR=1 \
-CEREBELLUM_OSMESA_LIBRARY_PATH="$HOME/.local/lib/cerebellum-osmesa/usr/lib/x86_64-linux-gnu" \
-./build/test_python_simulator
-```
-
-The test starts a persistent LIBERO `libero_spatial` task at 30 Hz, resets from its recorded init
-state, transports both 256×256 cameras plus the flattened state into C++, applies one 7D no-op
-command, and verifies the next observation. The default test backend is synthetic and requires
-neither MuJoCo nor a GPU.
-
-Run the LIBERO-trained SmolVLA checkpoint through the complete simulator loop:
-
-```bash
-CUDA_VISIBLE_DEVICES=3 \
-HF_HOME="$HOME/.cache/cerebellum-hf" \
-MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
-__EGL_VENDOR_LIBRARY_FILENAMES="$HOME/.local/lib/cerebellum-nvidia-egl/payload/10_nvidia.json" \
-LD_LIBRARY_PATH="$HOME/.local/lib/cerebellum-nvidia-egl/payload" \
-./build/run_libero --ticks 300 --warmup-inferences 1 \
+./build/run_libero \
   --model HuggingFaceVLA/smolvla_libero \
-  --video results/libero_realtime_discard.mp4 \
-  --actions-csv results/libero_realtime_discard_actions.csv
+  --output results/libero_run.json \
+  --video results/libero_run.mp4 \
+  --actions-csv results/libero_run_actions.csv
 ```
 
-The executable validates the checkpoint's 8D state, two-camera, and 7D action schema before
-control starts. It clamps commands to LIBERO's `[-1, 1]` action space and reports model chunks,
-fallbacks, simulator steps, safety decisions, staleness, termination, and task success.
-The rollout defaults to the official `lerobot/libero` dataset's native 10 Hz action rate. A
-future 30 Hz deployment must explicitly resample these delta actions; consuming them three times
-as fast changes their physical meaning and is not a valid evaluation.
-`RuntimeConfig::control_period` is the single runtime clock source: refresh floors, chunk duration,
-RTC delay/horizon defaults, safety timing, and measured inference-delay steps derive from it.
-Freshness is profile-specific: the base 30 Hz runtime retains its 350 ms requirement, while
-`run_libero` defaults to the measured 575 ms minimum for the 10 Hz LIBERO checkpoint. Override it
-explicitly with `--max-staleness-ms`; do not reuse the LIBERO value for a faster deployment.
-The LIBERO runner defaults to three RTC denoising steps. On this checkpoint, three steps retained
-about 90% prefix-error reduction while meeting the 575 ms target; the paper's five-step setting was
-smoother in the median but too slow here. Other checkpoints must remeasure this tradeoff.
-`--video` is optional. It records both policy cameras side by side at the control rate and overlays
-the stitching mode, action/simulator steps, observation age, safety flags, fallback/rejection, and
-task success. Recording happens on the simulator I/O worker, never on the real-time control thread.
-`--actions-csv` is also optional. It records the safety-filtered command, source chunk ID/index,
-and an exact chunk-boundary marker after control stops. The JSON report always summarizes the
-executed-command first/second/third finite differences and the queue's raw chunk-boundary jump.
+The default command runs the verified 3 Hz Discard profile. Add `--stitching rtc` only when
+evaluating the experimental RTC path. EGL/OSMesa setup and all CLI controls are documented in
+[docs/libero.md](docs/libero.md).
 
-Benchmark the same full C++ → Python → model → C++ path with realistic three-camera payloads:
+## Design boundaries
 
-```bash
-# Cerebellum transport/runtime baseline without model cost
-./build/bench_bridge --runner synthetic --device cpu --warmup 10 --iterations 100
+Cerebellum schedules a policy; it does not train one. A base checkpoint smoke test proves loading,
+preprocessing, denoising, and shapes, not useful behavior without task-specific weights. Hardware
+collision protection, torque limits, and emergency stop remain the robot controller's job.
 
-# Real model split: total, model, and total-minus-model Cerebellum overhead
-CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
-  ./build/bench_bridge --runner smolvla --device cuda \
-  --warmup 10 --iterations 100 --output results/smolvla_h100_baseline.json
-```
+The core runtime is intentionally independent of LIBERO and SmolVLA. `ObservationSource`,
+`ChunkGenerator`, and `ActionSink` are the adapter seams for another camera stack, policy, or robot.
 
-The report gives p50/p90/p99/max from C++ observation lookup to a decoded chunk, the Python
-model call, Cerebellum overhead, and each serialization/IPC/conversion stage. The headline
-overhead is computed per request as `total - model`; `response_wait` intentionally contains
-the Python stages and therefore must not be added to them again. Observation-capture-to-action
-staleness remains a separate control-loop metric.
-
-Benchmark the complete 30 Hz inference-worker → chunk-queue → action-sink runtime using
-Discard stitching:
-
-```bash
-# Model-delay simulation using the measured 149 ms H100 latency
-./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
-  --ticks 300 --refresh-trigger 6 --refresh-policy tail
-
-# Freshness/power comparison: continuously generate replacement chunks
-./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
-  --ticks 300 --refresh-trigger 6 --refresh-policy continuous
-
-# Real SmolVLA runtime
-CUDA_VISIBLE_DEVICES=2 HF_HOME=/path/to/huggingface/cache \
-  ./build/bench_runtime --runner smolvla --device cuda --warmup-inferences 10 \
-  --ticks 300 --refresh-trigger 6 --refresh-policy tail \
-  --output results/runtime_discard_smolvla_h100_baseline.json
-
-# RTC: start after s-d actions and inpaint actions committed during inference
-./build/bench_runtime --runner synthetic --device cpu --inference-ms 149 \
-  --ticks 300 --refresh-trigger 6 --stitching rtc --refresh-policy horizon
-
-# Compare RTC guidance cost and committed-prefix agreement at 5/6/8/10 steps.
-# CUDA_VISIBLE_DEVICES maps physical GPU 3 to logical cuda:0 in this process.
-CUDA_VISIBLE_DEVICES=3 PYTHONPATH=python conda run -n cerebellum \
-  python -m cerebellum_model.rtc_sweep --device cuda --physical-gpu 3 \
-  --steps 5 6 8 10 --warmup 1 --iterations 10 \
-  --output results/rtc_denoise_sweep_gpu3.json
-
-# Run the winning setting through the complete C++ two-loop runtime.
-CUDA_VISIBLE_DEVICES=3 ./build/bench_runtime --runner smolvla --device cuda \
-  --stitching rtc --refresh-policy horizon --rtc-denoise-steps 5 \
-  --rtc-inference-delay 8 --rtc-execution-horizon 8 \
-  --warmup-inferences 2 --ticks 300 --refresh-trigger 6
-```
-
-This report covers all action emissions, including fallbacks, and separately reports action
-lateness, observation-to-action staleness, chunk-ready-to-action queue age, underruns, skipped
-steps, discarded actions, seam size, and inference/queue counters.
-`inference_load.worker_busy_percent` is the fraction of runtime spent inside
-`ChunkGenerator::generate()`; it is a comparable workload proxy, not measured GPU wattage.
-
-Run the dependency-light contract tests:
-
-```bash
-PYTHONPATH=python conda run -n cerebellum python -m pytest -q
-```
-
-Run one real checkpoint forward from the local Hugging Face cache:
-
-```bash
-PYTHONPATH=python conda run -n cerebellum \
-  python -m cerebellum_model.smoke --device cuda --local-files-only
-```
-
-Use `--device cpu` when no GPU has enough free memory. Install the pinned optional dependencies
-without sudo using `python/requirements-smolvla.txt`.
-
-## Action safety
-
-`ActionSafetyFilter` is an optional, allocation-free boundary between the chunk queue and the
-`ActionSink`. It rejects non-finite or over-age model actions, clamps command bounds, and limits
-per-dimension action rate and acceleration. Rejected actions hold the last safe command (or a
-configured replacement before the first accepted command). The runtime remembers only the
-filtered result, so an unsafe prediction cannot later reappear through `HoldLast` or extrapolation.
-
-Physical values are deliberately not built into Cerebellum. A robot adapter constructs
-`SafetyConfig` with its command bounds, rate limits, acceleration limits, maximum observation age,
-and replacement action. For an absolute joint-position policy, action bounds are joint limits and
-action rate is joint velocity; an adapter for another command space maps its own units instead.
-Before starting control, the adapter should call `reset()` with the measured starting pose or
-command and pass the filter to `RuntimeLoop`. Hardware collision protection, torque limits, and
-the emergency stop remain the responsibility of the robot controller.
-
-Every emitted action includes `safety_flags` and `safety_rejected`. Offline replay CSVs preserve
-those fields along with `observation_age_ns`, making safety interventions inspectable after a run.
-
-## Offline replay
-
-`ReplayObservationSource` runs prerecorded observations through the same newest-wins
-`ObservationSource` contract used by a live deployment. Frames carry offsets from the beginning
-of an episode; `start()` rebases their capture stamps onto the current monotonic clock, and the
-inference worker receives the newest frame whose offset has elapsed. Recorded steady-clock epochs
-are deliberately ignored because they are meaningless in another process or machine.
-
-`ReplayActionSink` reserves its complete output capacity before control starts. It records actions
-without allocating or performing file I/O on the control thread; after the loop stops,
-`write_replay_actions_csv()` writes steps, relative deadlines, emission times, fallback flags, and
-action values. Dataset decoding is intentionally outside the real-time core: an adapter loads an
-episode into `std::vector<ReplayObservationFrame>`, then the existing `RuntimeLoop` and either the
-synthetic or SmolVLA `ChunkGenerator` execute it unchanged.
-
-The dependency-free `replay` test exercises timestamp rebasing, newest-frame selection, bounded
-recording, CSV output, and a complete replay through the asynchronous inference and control loops.
-No GPU is required for this test.
-
-Convert a portable NumPy episode and run it through the CPU synthetic worker:
-
-```bash
-PYTHONPATH=python python -m cerebellum_model.replay_export \
-  --input episode.npz --output episode.cbr
-
-./build/bench_replay --episode episode.cbr --runner synthetic --device cpu \
-  --actions-output predicted-actions.csv --report-output replay-report.json
-```
-
-The NPZ contract and binary format are documented in [`docs/replay.md`](docs/replay.md). The same
-`bench_replay` command accepts `--runner smolvla --device cuda`; use that only when a GPU is free.
-
-See [`spec.md`](spec.md) for the problem statement, latency budget, invariants, measurement
-methodology, and phased plan. Performance numbers in the spec remain targets until the benchmark
-tables and sweeps are committed.
-
-Phase 1 is the runtime standalone on synthetic input; phase 2 wires in Retina and Axon.
-The deliverables, in priority order, are a per-stage p50/p99 latency table, a chunk-size
-vs. staleness/jitter sweep, and underrun count vs. refresh trigger.
+See [architecture](ARCH_DIAG.md), [runtime specification](spec.md), [LIBERO operation](docs/libero.md),
+[replay format](docs/replay.md), and [results](results/README.md).
 
 ## License
 

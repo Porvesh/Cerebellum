@@ -25,6 +25,16 @@ extern char **environ;
 namespace cerebellum {
 namespace {
 
+std::uint32_t seed_for_observation(std::uint32_t base, std::uint64_t sequence) noexcept {
+    // SplitMix64 finalizer: deterministic across processes and standard-library
+    // versions, unlike std::hash. Folding to 32 bits matches the wire contract.
+    std::uint64_t value = sequence + 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    value ^= value >> 31U;
+    return base ^ static_cast<std::uint32_t>(value ^ (value >> 32U));
+}
+
 constexpr std::uint16_t kProtocolVersion = 5;
 constexpr std::uint32_t kMaxFrameBytes = 16U * 1024U * 1024U;
 constexpr std::string_view kHelloMagic = "CBHI";
@@ -247,7 +257,9 @@ bool PythonChunkGenerator::generate(const InferenceRequest &request, Chunk &out)
         append_u64(payload, static_cast<std::uint64_t>(request.first_step));
         append_u64(payload, static_cast<std::uint64_t>(request.last_emitted_step));
         append_u32(payload, static_cast<std::uint32_t>(request.action_count));
-        append_u32(payload, options_.seed);
+        append_u32(payload, options_.vary_seed_by_observation
+                                ? seed_for_observation(options_.seed, observation->sequence)
+                                : options_.seed);
         append_u64(payload, observation->sequence);
         append_u64(payload,
                    static_cast<std::uint64_t>(std::chrono::duration_cast<Nanos>(

@@ -246,7 +246,7 @@ class LiberoSimulator:
         suite_name: str,
         task_id: int,
         init_state: int,
-        control_hz: int,
+        simulation_hz: int,
         image_size: int,
     ) -> None:
         # These imports intentionally stay inside the real backend. Unit tests
@@ -267,7 +267,7 @@ class LiberoSimulator:
             bddl_file_name=bddl,
             camera_heights=image_size,
             camera_widths=image_size,
-            control_freq=control_hz,
+            control_freq=simulation_hz,
         )
         raw = self._env.reset()
         init_path = Path(get_libero_path("init_states")) / task.problem_folder / task.init_states_file
@@ -356,7 +356,7 @@ def _backend(args: argparse.Namespace) -> SimulatorBackend:
         suite_name=args.suite,
         task_id=args.task_id,
         init_state=args.init_state,
-        control_hz=args.control_hz,
+        simulation_hz=args.simulation_hz,
         image_size=args.image_size,
     )
 
@@ -411,6 +411,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task-id", type=int, default=0)
     parser.add_argument("--init-state", type=int, default=0)
     parser.add_argument("--control-hz", type=int, default=30)
+    parser.add_argument("--simulation-hz", type=int, default=20)
     parser.add_argument("--video-path", default="")
     parser.add_argument("--video-label", default="")
     return parser.parse_args(argv)
