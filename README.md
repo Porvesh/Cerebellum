@@ -89,9 +89,10 @@ python -m pip install -e '.[libero,video]'
 ## Run LIBERO
 
 ```bash
-CUDA_VISIBLE_DEVICES=3 \
+: "${GPU_ID:?Set GPU_ID to an available physical GPU index}"
+CUDA_VISIBLE_DEVICES="$GPU_ID" \
 HF_HOME=/path/to/huggingface/cache \
-MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=3 \
+MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID="$GPU_ID" \
 ./build/run_libero \
   --model HuggingFaceVLA/smolvla_libero \
   --output results/libero_run.json \

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from time import monotonic_ns
 
@@ -21,6 +22,17 @@ def _summary(values: list[float]) -> dict[str, float]:
         "p99": float(np.percentile(data, 99)),
         "max": float(np.max(data)),
     }
+
+
+def _physical_gpu(args: argparse.Namespace) -> int | str | None:
+    if args.physical_gpu is not None:
+        return args.physical_gpu
+    visible = (
+        os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",", maxsplit=1)[0].strip()
+    )
+    if not visible:
+        return None
+    return int(visible) if visible.isdecimal() else visible
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
@@ -93,7 +105,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     return {
         "runner": "smolvla",
         "device": args.device,
-        "physical_gpu": args.physical_gpu,
+        "physical_gpu": _physical_gpu(args),
         "seed": args.seed,
         "warmup": args.warmup,
         "iterations": args.iterations,
@@ -107,7 +119,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=DEFAULT_MODEL_ID)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--physical-gpu", type=int, default=3)
+    parser.add_argument(
+        "--physical-gpu",
+        type=int,
+        help="physical GPU index for report metadata; inferred from CUDA_VISIBLE_DEVICES when set",
+    )
     parser.add_argument("--steps", type=int, nargs="+", default=[5, 6, 8, 10])
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=10)
