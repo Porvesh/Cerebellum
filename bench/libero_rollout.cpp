@@ -34,7 +34,7 @@ struct Arguments {
     int ticks = 300;
     int warmup_inferences = 1;
     int refresh_trigger = 0;
-    int rtc_denoise_steps = 5;
+    int rtc_denoise_steps = 3;
     int rtc_inference_delay = 0;
     int rtc_execution_horizon = 0;
     double inference_budget_ms = 300.0;
@@ -330,6 +330,7 @@ void report(std::ostream &out, const Arguments &args, RuntimeLoop &loop,
       << "  \"refresh_trigger\": " << config.effective_refresh_trigger() << ",\n"
       << "  \"rtc_inference_delay\": " << loop.queue().inference_delay() << ",\n"
       << "  \"rtc_execution_horizon\": " << loop.queue().execution_horizon() << ",\n"
+      << "  \"rtc_denoise_steps\": " << args.rtc_denoise_steps << ",\n"
         << "  \"stitching\": \"" << (args.stitching == Stitching::Rtc ? "rtc" : "discard")
         << "\",\n"
         << "  \"ticks_requested\": " << args.ticks << ",\n"
@@ -492,6 +493,10 @@ int main(int argc, char **argv) {
         const TimePoint started = now();
         loop.run_for(static_cast<std::size_t>(args.ticks), args.pacing);
         const Nanos wall_time = now() - started;
+
+        if (!simulator.drain(std::chrono::seconds(5))) {
+            throw std::runtime_error("simulator did not resolve final command");
+        }
 
         if (!simulator.healthy() && !simulator.last_error().empty()) {
             throw std::runtime_error("simulator failed: " + simulator.last_error());

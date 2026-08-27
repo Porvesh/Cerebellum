@@ -180,6 +180,40 @@ transitions are the next functional bottlenecks.
 - [`libero_realtime_discard_actions.csv`](libero_realtime_discard_actions.csv)
 - [`libero_realtime_rtc5_actions.csv`](libero_realtime_rtc5_actions.csv)
 
+### Non-blocking recording and RTC-3 optimization
+
+Video composition and H.264 encoding now run on a bounded background queue rather than the
+simulator I/O thread. A repeated 300-tick Discard rollout produced 300 applied commands, zero
+supersessions, and 300 video frames at exactly 10 Hz. The adapter also drains the final mailbox
+publication before reporting, preventing an applied command from being misclassified as pending.
+
+Nsight Systems 2026.4.1 then captured one five-step conditioned request using the exact LIBERO
+checkpoint. Under tracing, the five forward denoiser calls consumed 222.8 ms and the five VJPs
+248.6 ms—87% of the enclosing RTC range together. Prefix preparation and correction application
+used only 1.1 ms. The optimization target is therefore the number or implementation of
+forward/backward pairs, not Cerebellum transport or Retina.
+
+An unprofiled exact-checkpoint sweep measured the latency/conditioning tradeoff:
+
+| RTC steps | Latency p50 | Latency p99 | Guided / unguided prefix MSE |
+|---:|---:|---:|---:|
+| 3 | 229.2 ms | 231.7 ms | 10.31% |
+| 4 | 299.0 ms | 304.1 ms | 4.50% |
+| 5 | 340.5 ms | 370.2 ms | 3.42% |
+
+Three steps were then run through the full 300-tick real-time loop. RTC-3 applied all 300 commands,
+had no freshness violations, and measured 457.0 ms p50, 557.7 ms p90, and 566.0 ms maximum action
+age. Its median raw boundary jump was 0.090, about 95% below Discard's 1.990, while its p90 boundary
+jump improved to 1.808. The task still failed, so this is a runtime/freshness success rather than a
+policy-success claim. Three steps are now the LIBERO-specific default; other checkpoints retain
+their own configuration and must be remeasured.
+
+- [`libero_async_video_verification.json`](libero_async_video_verification.json)
+- [`libero_rtc5_nsight_summary.json`](libero_rtc5_nsight_summary.json)
+- [`libero_rtc_steps345_gpu3.json`](libero_rtc_steps345_gpu3.json)
+- [`libero_realtime_rtc3.json`](libero_realtime_rtc3.json)
+- [`libero_realtime_rtc3_actions.csv`](libero_realtime_rtc3_actions.csv)
+
 ## Discard refresh-policy baseline
 
 The complete `RuntimeLoop` ran for 300 ticks at 30 Hz with the default 50-action

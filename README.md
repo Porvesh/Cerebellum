@@ -174,6 +174,9 @@ RTC delay/horizon defaults, safety timing, and measured inference-delay steps de
 Freshness is profile-specific: the base 30 Hz runtime retains its 350 ms requirement, while
 `run_libero` defaults to the measured 575 ms minimum for the 10 Hz LIBERO checkpoint. Override it
 explicitly with `--max-staleness-ms`; do not reuse the LIBERO value for a faster deployment.
+The LIBERO runner defaults to three RTC denoising steps. On this checkpoint, three steps retained
+about 90% prefix-error reduction while meeting the 575 ms target; the paper's five-step setting was
+smoother in the median but too slow here. Other checkpoints must remeasure this tradeoff.
 `--video` is optional. It records both policy cameras side by side at the control rate and overlays
 the stitching mode, action/simulator steps, observation age, safety flags, fallback/rejection, and
 task success. Recording happens on the simulator I/O worker, never on the real-time control thread.

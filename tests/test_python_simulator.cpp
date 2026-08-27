@@ -96,9 +96,11 @@ void test_latest_action_wins_without_blocking_control() {
   }
   const auto elapsed = std::chrono::steady_clock::now() - started;
   CHECK(elapsed < std::chrono::milliseconds(20));
-  CHECK(wait_for_applied(simulator, 1));
-  CHECK(simulator.stats().commands_emitted == kWrites);
-  CHECK(simulator.stats().commands_superseded > 0);
+  CHECK(simulator.drain(std::chrono::seconds(3)));
+  const SimulatorStats stats = simulator.stats();
+  CHECK(stats.commands_emitted == kWrites);
+  CHECK(stats.commands_superseded > 0);
+  CHECK(stats.commands_applied + stats.commands_superseded == kWrites);
 }
 
 void test_runtime_closes_observation_inference_action_loop() {
@@ -118,11 +120,12 @@ void test_runtime_closes_observation_inference_action_loop() {
                    std::chrono::microseconds(20));
 
   loop.run_for(100);
+  CHECK(simulator.drain(std::chrono::seconds(3)));
 
   CHECK(loop.inference_stats().generated > 0);
   CHECK(loop.queue().consumer_stats().chunks_accepted > 0);
   CHECK(simulator.stats().commands_emitted == 100);
-  CHECK(simulator.stats().commands_applied > 0);
+  CHECK(simulator.stats().commands_applied + simulator.stats().commands_superseded == 100);
   CHECK(simulator.latest()->sequence > 0);
 }
 

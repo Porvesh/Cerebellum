@@ -1,0 +1,37 @@
+{
+  "runner": "smolvla",
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "device": "cuda",
+  "physical_gpu": 3,
+  "seed": 11,
+  "warmup": 1,
+  "iterations": 5,
+  "inference_delay": 5,
+  "execution_horizon": 5,
+  "results": [
+    {
+      "denoise_steps": 3,
+      "latency_ms": {"p50": 229.186344, "p90": 230.888059, "p99": 231.744355, "max": 231.839499},
+      "baseline_prefix_mse": 0.0410621166,
+      "guided_prefix_mse": 0.0042343722,
+      "guided_to_baseline_mse_ratio": 0.1031211375,
+      "peak_allocated_mib": 1338.360352
+    },
+    {
+      "denoise_steps": 4,
+      "latency_ms": {"p50": 299.036365, "p90": 302.721858, "p99": 304.132659, "max": 304.289415},
+      "baseline_prefix_mse": 0.0466450676,
+      "guided_prefix_mse": 0.0021010633,
+      "guided_to_baseline_mse_ratio": 0.0450436320,
+      "peak_allocated_mib": 1338.366699
+    },
+    {
+      "denoise_steps": 5,
+      "latency_ms": {"p50": 340.510368, "p90": 359.906244, "p99": 370.226179, "max": 371.372838},
+      "baseline_prefix_mse": 0.0501410253,
+      "guided_prefix_mse": 0.0017164710,
+      "guided_to_baseline_mse_ratio": 0.0342328669,
+      "peak_allocated_mib": 1338.373047
+    }
+  ]
+}

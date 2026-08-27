@@ -301,6 +301,27 @@ SimulatorStats PythonSimulatorAdapter::stats() const noexcept {
   };
 }
 
+bool PythonSimulatorAdapter::drain(std::chrono::milliseconds timeout) noexcept {
+  if (timeout <= std::chrono::milliseconds::zero())
+    return false;
+  const std::uint64_t target =
+      commands_emitted_.load(std::memory_order_acquire);
+  try {
+    std::unique_lock lock(acknowledgement_mutex_);
+    acknowledgement_cv_.wait_for(lock, timeout, [this, target] {
+      const std::uint64_t resolved =
+          commands_applied_.load(std::memory_order_acquire) +
+          commands_superseded_.load(std::memory_order_acquire);
+      return resolved >= target || !healthy();
+    });
+  } catch (...) {
+    return false;
+  }
+  return commands_applied_.load(std::memory_order_acquire) +
+             commands_superseded_.load(std::memory_order_acquire) >=
+         target;
+}
+
 std::string PythonSimulatorAdapter::last_error() const {
   std::lock_guard lock(error_mutex_);
   return last_error_;

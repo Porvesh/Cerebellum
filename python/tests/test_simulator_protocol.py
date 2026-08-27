@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import threading
+from time import monotonic
 
 import numpy as np
 import pytest
@@ -143,3 +145,30 @@ def test_video_recorder_writes_side_by_side_mp4(tmp_path: Path) -> None:
     recorder.write(simulator.step(command), command)
     recorder.close()
     assert output.stat().st_size > 0
+
+
+def test_video_recorder_does_not_encode_on_simulator_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowWriter:
+        def append_data(self, _: np.ndarray) -> None:
+            started.set()
+            release.wait(timeout=1.0)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("imageio.v2.get_writer", lambda *args, **kwargs: SlowWriter())
+    simulator = SyntheticSimulator(action_dim=7, image_size=16)
+    command = SimulatorCommand(1, 0, np.zeros(7, dtype=np.float32))
+    recorder = VideoRecorder(str(tmp_path / "async.mp4"), "test", 10)
+    before = monotonic()
+    recorder.write(simulator.step(command), command)
+    elapsed = monotonic() - before
+    assert elapsed < 0.2
+    assert started.wait(timeout=0.2)
+    release.set()
+    recorder.close()

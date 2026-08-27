@@ -1,0 +1,13 @@
+{
+  "model": "HuggingFaceVLA/smolvla_libero",
+  "physical_gpu": 3,
+  "control_hz": 10.0,
+  "ticks": 300,
+  "commands_emitted": 300,
+  "commands_applied": 300,
+  "commands_superseded": 0,
+  "video_frames": 300,
+  "video_fps": 10.0,
+  "video_frame_drops": 0,
+  "note": "H.264 composition and encoding ran on the asynchronous video worker; the end-of-run simulator drain resolved the final mailbox publication before reporting."
+}

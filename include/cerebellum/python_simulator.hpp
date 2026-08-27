@@ -92,6 +92,10 @@ public:
     return images_;
   }
   SimulatorStats stats() const noexcept;
+  // Waits off the control thread until every emitted command is either applied
+  // or explicitly counted as superseded. End-of-run reports then cannot race
+  // the final mailbox publication.
+  bool drain(std::chrono::milliseconds timeout) noexcept;
   std::string last_error() const;
 
 private:

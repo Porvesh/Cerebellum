@@ -6,7 +6,9 @@ import argparse
 from dataclasses import replace
 import os
 from pathlib import Path
+import queue
 import sys
+import threading
 from time import monotonic_ns
 from typing import Protocol
 
@@ -38,7 +40,7 @@ class SimulatorBackend(Protocol):
 
 
 class VideoRecorder:
-    """Writes both policy cameras and control metadata into one MP4."""
+    """Queues policy cameras for an MP4 encoder that never blocks simulation."""
 
     def __init__(self, path: str, label: str, fps: int) -> None:
         try:
@@ -53,6 +55,12 @@ class VideoRecorder:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self._cv2 = cv2
         self._label = label
+        self._queue: queue.Queue[
+            tuple[SimulatorObservation, SimulatorCommand] | None
+        ] = queue.Queue(maxsize=max(32, fps * 4))
+        self._dropped_frames = 0
+        self._error: BaseException | None = None
+        self._closed = False
         self._writer = imageio.get_writer(
             destination,
             fps=fps,
@@ -61,6 +69,12 @@ class VideoRecorder:
             macro_block_size=None,
             ffmpeg_log_level="error",
         )
+        self._thread = threading.Thread(
+            target=self._encoder_loop,
+            name="cerebellum-video-encoder",
+            daemon=True,
+        )
+        self._thread.start()
 
     @staticmethod
     def _safety_names(flags: int) -> str:
@@ -77,6 +91,20 @@ class VideoRecorder:
         return "+".join(names) if names else "none"
 
     def write(self, observation: SimulatorObservation, command: SimulatorCommand) -> None:
+        if self._closed:
+            raise RuntimeError("video recorder is closed")
+        if self._error is not None:
+            raise RuntimeError("video encoder failed") from self._error
+        try:
+            self._queue.put_nowait((observation, command))
+        except queue.Full:
+            self._dropped_frames += 1
+
+    @property
+    def dropped_frames(self) -> int:
+        return self._dropped_frames
+
+    def _encode(self, observation: SimulatorObservation, command: SimulatorCommand) -> None:
         frames = [
             image.pixels.reshape(image.height, image.width, image.channels)
             for image in observation.images
@@ -107,8 +135,31 @@ class VideoRecorder:
         )
         self._writer.append_data(canvas)
 
+    def _encoder_loop(self) -> None:
+        try:
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    break
+                self._encode(*item)
+        except BaseException as exc:
+            self._error = exc
+        finally:
+            self._writer.close()
+
     def close(self) -> None:
-        self._writer.close()
+        if self._closed:
+            return
+        self._closed = True
+        while self._thread.is_alive():
+            try:
+                self._queue.put(None, timeout=0.1)
+                break
+            except queue.Full:
+                continue
+        self._thread.join()
+        if self._error is not None:
+            raise RuntimeError("video encoder failed") from self._error
 
 
 class SyntheticSimulator:
@@ -338,9 +389,17 @@ def serve(args: argparse.Namespace) -> None:
                 response = encode_observation_error(sequence, str(exc))
             write_frame(sink, response)
     finally:
-        if recorder is not None:
-            recorder.close()
-        simulator.close()
+        try:
+            if recorder is not None:
+                recorder.close()
+                if recorder.dropped_frames:
+                    print(
+                        f"cerebellum video recorder dropped {recorder.dropped_frames} frames",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+        finally:
+            simulator.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -1,0 +1,21 @@
+{
+  "tool": "NVIDIA Nsight Systems 2026.4.1",
+  "workload": "one conditioned five-step request using HuggingFaceVLA/smolvla_libero on physical GPU 3",
+  "notes": [
+    "The exact checkpoint and observation shapes are used; C++ and wire transport are excluded.",
+    "The full process was traced because NVTX capture-start did not trigger with torch.cuda.nvtx.",
+    "NVTX times include tracing overhead and are for attribution, not deployment latency."
+  ],
+  "rtc_nvtx_cpu_range_ms": {
+    "sample_actions_rtc": {"instances": 1, "total": 542.044976},
+    "base_denoiser": {"instances": 5, "total": 222.792011, "average": 44.558402},
+    "vjp": {"instances": 5, "total": 248.626847, "average": 49.725369},
+    "prepare_guidance": {"instances": 5, "total": 0.788566, "average": 0.157713},
+    "apply_correction": {"instances": 5, "total": 0.336447, "average": 0.067289}
+  },
+  "attribution": {
+    "forward_plus_vjp_share_percent": 86.97,
+    "rtc_request_gpu_operations": 14870,
+    "conclusion": "Removing whole denoising steps targets the dominant forward-plus-VJP cost; RTC bookkeeping and Cerebellum transport are not material bottlenecks."
+  }
+}
